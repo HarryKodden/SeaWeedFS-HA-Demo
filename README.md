@@ -2,6 +2,10 @@
 
 This repository contains configuration files and scripts to set up a High Availability (HA) SeaweedFS cluster with a user-friendly management dashboard.
 
+On this dashboard you can manipulate the cluster, turn nodes on/off ans see how the cluster recovers from that. The S3 operations are continueously processed.
+
+![Cluster](cluster.png)
+
 ## Architecture
 
 The setup includes:
