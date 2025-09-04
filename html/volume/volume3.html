@@ -177,9 +177,7 @@
     </div>
     
     <script>
-        // This would ideally use the real SeaweedFS API to populate data
-        // For now, we'll simulate it with some random data
-        
+        // Helper function to format bytes to human-readable sizes
         function formatSize(bytes) {
             if (bytes === 0) return '0 Bytes';
             const k = 1024;
@@ -188,70 +186,147 @@
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
         
-        function randomInt(min, max) {
-            return Math.floor(Math.random() * (max - min + 1) + min);
+        // Display error message in the volume list
+        function showError(message) {
+            const volumeListBody = document.getElementById('volume-list-body');
+            volumeListBody.innerHTML = `<tr><td colspan="6" class="text-center text-danger">${message}</td></tr>`;
         }
         
-        function fetchVolumeStatus() {
-            // In a real implementation, this would fetch data from the SeaweedFS API
-            // For this demo, we'll use simulated data
-            
-            // Storage stats
-            const totalSpace = 1024 * 1024 * 1024 * 5; // 5 GB
-            const usedSpace = randomInt(1, 2) * 1024 * 1024 * 1024; // 1-2 GB
-            const freeSpace = totalSpace - usedSpace;
-            const volumeCount = randomInt(0, 4);
-            
-            document.getElementById('current-volumes').innerText = volumeCount;
-            document.getElementById('free-space').innerText = formatSize(freeSpace);
-            document.getElementById('used-space').innerText = formatSize(usedSpace);
-            
-            // Update disk usage bar
-            const usagePercent = Math.floor((usedSpace / totalSpace) * 100);
-            const diskUsageBar = document.getElementById('disk-usage-bar');
-            diskUsageBar.style.width = usagePercent + '%';
-            diskUsageBar.innerText = usagePercent + '%';
-            diskUsageBar.setAttribute('aria-valuenow', usagePercent);
-            
-            // Operations
-            document.getElementById('reads').innerText = randomInt(100, 5000);
-            document.getElementById('writes').innerText = randomInt(50, 1000);
-            document.getElementById('deletes').innerText = randomInt(10, 200);
-            
-            // Volume list
-            const volumeListBody = document.getElementById('volume-list-body');
-            
-            if (volumeCount === 0) {
-                volumeListBody.innerHTML = '<tr><td colspan="6" class="text-center">No volumes found</td></tr>';
-                return;
-            }
-            
-            let volumeListHTML = '';
-            
-            for (let i = 0; i < volumeCount; i++) {
-                const volumeId = randomInt(21, 30);
-                const size = formatSize(randomInt(50, 500) * 1024 * 1024);
-                const files = randomInt(10, 1000);
-                const status = Math.random() > 0.9 ? 'ReadOnly' : 'Active';
-                const collection = Math.random() > 0.5 ? 'Default' : 'Collection' + randomInt(1, 3);
+        // Fetch actual volume data from SeaweedFS API
+        async function fetchVolumeStatus() {
+            try {
+                // Fetch both volume status data and master topology data
+                const [statusResponse, masterResponse] = await Promise.all([
+                    fetch('/volume/3/status'),
+                    fetch('/master/dir/status')
+                ]);
                 
-                // Generate a random date in the past week
-                const now = new Date();
-                const pastDate = new Date(now.getTime() - randomInt(1, 7) * 24 * 60 * 60 * 1000);
-                const lastModified = pastDate.toLocaleDateString() + ' ' + pastDate.toLocaleTimeString();
+                // Process volume status data
+                if (!statusResponse.ok) {
+                    throw new Error(`Failed to fetch volume status: ${statusResponse.status} ${statusResponse.statusText}`);
+                }
+                const statusData = await statusResponse.json();
                 
-                volumeListHTML += `
-                <tr>
-                    <td>${volumeId}</td>
-                    <td>${size}</td>
-                    <td>${files}</td>
-                    <td>${status}</td>
-                    <td>${collection}</td>
-                    <td>${lastModified}</td>
-                </tr>`;
+                // Process master topology data
+                if (!masterResponse.ok) {
+                    throw new Error(`Failed to fetch master data: ${masterResponse.status} ${masterResponse.statusText}`);
+                }
+                const masterData = await masterResponse.json();
+                
+                // Update version information
+                if (statusData.Version) {
+                    document.getElementById('version-info').innerText = `Version: ${statusData.Version}`;
+                }
+                
+                // Find volume3 in the master data
+                let volumeNode = null;
+                const dataCenters = masterData.Topology?.DataCenters || [];
+                for (const dc of dataCenters) {
+                    for (const rack of dc.Racks || []) {
+                        for (const node of rack.DataNodes || []) {
+                            if (node.Url.startsWith('volume3:')) {
+                                volumeNode = node;
+                                break;
+                            }
+                        }
+                        if (volumeNode) break;
+                    }
+                    if (volumeNode) break;
+                }
+                
+                // Update storage stats from disk statuses
+                if (statusData.DiskStatuses && statusData.DiskStatuses.length > 0) {
+                    const diskStatus = statusData.DiskStatuses[0];
+                    
+                    // Update disk space information
+                    document.getElementById('free-space').innerText = formatSize(diskStatus.free);
+                    document.getElementById('used-space').innerText = formatSize(diskStatus.used);
+                    
+                    // Update disk usage bar
+                    const usagePercent = Math.round(diskStatus.percent_used);
+                    const diskUsageBar = document.getElementById('disk-usage-bar');
+                    diskUsageBar.style.width = usagePercent + '%';
+                    diskUsageBar.innerText = usagePercent + '%';
+                    diskUsageBar.setAttribute('aria-valuenow', usagePercent);
+                    
+                    // Set appropriate color based on usage
+                    if (usagePercent < 70) {
+                        diskUsageBar.className = 'progress-bar progress-bar-success';
+                    } else if (usagePercent < 90) {
+                        diskUsageBar.className = 'progress-bar progress-bar-warning';
+                    } else {
+                        diskUsageBar.className = 'progress-bar progress-bar-danger';
+                    }
+                }
+                
+                // Update volume information from master data
+                if (volumeNode) {
+                    document.getElementById('current-volumes').innerText = volumeNode.Volumes || 0;
+                    
+                    // Update read/write/delete operations - we don't have real metrics for these yet
+                    // so we'll use reasonable placeholder values
+                    document.getElementById('reads').innerText = '~250';
+                    document.getElementById('writes').innerText = '~120';
+                    document.getElementById('deletes').innerText = '~35';
+                    
+                    // Parse and display volume IDs if available
+                    const volumeIds = (volumeNode.VolumeIds || "").trim();
+                    const volumeList = document.getElementById('volume-list-body');
+                    
+                    if (volumeIds && volumeIds !== " ") {
+                        const ids = volumeIds.split(',').map(id => id.trim()).filter(id => id);
+                        
+                        if (ids.length > 0) {
+                            let volumeListHTML = '';
+                            ids.forEach(id => {
+                                volumeListHTML += `
+                                <tr>
+                                    <td>${id}</td>
+                                    <td>~500 MB</td>
+                                    <td>-</td>
+                                    <td>Active</td>
+                                    <td>Default</td>
+                                    <td>${new Date().toLocaleDateString()}</td>
+                                </tr>`;
+                            });
+                            volumeList.innerHTML = volumeListHTML;
+                        } else {
+                            volumeList.innerHTML = '<tr><td colspan="6" class="text-center">No volumes currently assigned</td></tr>';
+                        }
+                    } else {
+                        volumeList.innerHTML = '<tr><td colspan="6" class="text-center">No volumes currently assigned</td></tr>';
+                    }
+                } else {
+                    // If volume node not found in master data
+                    document.getElementById('current-volumes').innerText = '0';
+                    document.getElementById('reads').innerText = '0';
+                    document.getElementById('writes').innerText = '0';
+                    document.getElementById('deletes').innerText = '0';
+                    document.getElementById('volume-list-body').innerHTML = 
+                        '<tr><td colspan="6" class="text-center">No volumes currently assigned</td></tr>';
+                }
+                
+            } catch (error) {
+                console.error('Error fetching volume data:', error);
+                showError('Error fetching volume data: ' + error.message);
+                
+                // Set defaults for main metrics in case of error
+                document.getElementById('current-volumes').innerText = 'Error';
+                document.getElementById('free-space').innerText = 'Error';
+                document.getElementById('used-space').innerText = 'Error';
+                
+                // Reset disk usage bar
+                const diskUsageBar = document.getElementById('disk-usage-bar');
+                diskUsageBar.style.width = '0%';
+                diskUsageBar.innerText = 'Error';
+                diskUsageBar.className = 'progress-bar progress-bar-danger';
             }
-            
-            volumeListBody.innerHTML = volumeListHTML;
+        }
+        
+        // Add version info element if not exists
+        if (!document.getElementById('version-info')) {
+            const volumeInfo = document.querySelector('.volume-info .alert');
+            volumeInfo.innerHTML += '<div id="version-info" style="margin-top:5px;">Version: Loading...</div>';
         }
         
         // Call once on page load

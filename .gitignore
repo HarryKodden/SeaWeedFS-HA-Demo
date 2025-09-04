@@ -1,0 +1,7 @@
+.venv/
+.env
+.htpasswd
+.vscode/
+tmp/
+
+
