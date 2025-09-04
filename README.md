@@ -25,8 +25,8 @@ The setup includes:
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/seaweedfs-ha-demo.git
-   cd seaweedfs-ha-demo
+   git clone https://github.com/HarryKodden/SeaWeedFS-HA-Demo.git
+   cd SeaWeedFS-HA-Demo
    ```
 
 2. Run the setup script:
@@ -64,7 +64,7 @@ The dashboard provides:
 - `nginx.conf`: Reverse proxy configuration
 - `setup_cluster.sh`: Initial setup script
 - `test_cluster.sh`: Cluster validation script
-- `html/cluster_dashboard.html`: UI for the management dashboard
+- `html/cluster.html`: UI for the management dashboard
 - `.env`: Environment variables (created during setup)
 
 ## S3 API Usage
