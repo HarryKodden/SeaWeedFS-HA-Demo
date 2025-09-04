@@ -72,6 +72,9 @@
         .status-unknown {
             background-color: #f39c12;
         }
+        .status-offline {
+            background-color: #e74c3c;
+        }
         .status-section {
             margin-top: 15px;
             font-size: 14px;
@@ -82,6 +85,113 @@
             padding: 15px;
             margin-bottom: 30px;
             border-radius: 0 5px 5px 0;
+        }
+        .server-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .server-header h3 {
+            margin: 0;
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+        
+        /* Switch styles */
+        .switch-container {
+            display: flex;
+            align-items: center;
+        }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 24px;
+        }
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+        }
+        input:checked + .slider {
+            background-color: #2ecc71;
+        }
+        input:focus + .slider {
+            box-shadow: 0 0 1px #2ecc71;
+        }
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+        .slider.round {
+            border-radius: 24px;
+        }
+        .slider.round:before {
+            border-radius: 50%;
+        }
+        
+        /* Recovery message styles */
+        .recovery-message {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 8px;
+            margin: 10px 0;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+        }
+        .recovery-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #ffc107;
+            margin-right: 8px;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 0.4; }
+            50% { opacity: 1; }
+            100% { opacity: 0.4; }
+        }
+        
+        /* Server state transitions */
+        .server-card.failing {
+            animation: shake 0.5s;
+        }
+        .server-card.offline {
+            opacity: 0.7;
+            background-color: #f9f9f9;
+        }
+        @keyframes shake {
+            0% { transform: translateX(0); }
+            20% { transform: translateX(-10px); }
+            40% { transform: translateX(10px); }
+            60% { transform: translateX(-10px); }
+            80% { transform: translateX(10px); }
+            100% { transform: translateX(0); }
         }
         .refresh-btn {
             float: right;
@@ -96,6 +206,88 @@
         .refresh-btn:hover {
             background-color: #27ae60;
         }
+        /* S3 Operations Stream Styles */
+        .s3-operations-container {
+            margin-top: 20px;
+            margin-bottom: 30px;
+        }
+        #s3-operations-log {
+            width: 100%;
+            height: 200px;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+            resize: vertical;
+            overflow-y: scroll;
+            line-height: 1.4;
+        }
+        .badge {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 4px;
+            color: white;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 0.8em;
+            margin-right: 5px;
+        }
+        .read-badge { background-color: #3498db; }
+        .write-badge { background-color: #2ecc71; }
+        .delete-badge { background-color: #e74c3c; }
+        
+        .counter-container {
+            display: flex;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .counter-item {
+            margin-right: 20px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .counter-value {
+            font-weight: bold;
+            margin-left: 5px;
+            font-size: 1.1em;
+        }
+        
+        .action-buttons {
+            margin-left: auto;
+            margin-bottom: 10px;
+        }
+        
+        button {
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            margin-left: 5px;
+        }
+        
+        #clear-log {
+            background-color: #7f8c8d;
+        }
+        
+        #clear-log:hover {
+            background-color: #6c7a7d;
+        }
+        
+        #pause-stream {
+            background-color: #f39c12;
+        }
+        
+        #pause-stream:hover {
+            background-color: #e67e22;
+        }
+        
         footer {
             margin-top: 40px;
             text-align: center;
@@ -116,32 +308,68 @@
     
     <h2>Master Servers</h2>
     <div class="server-grid">
-        <div class="server-card">
-            <h3>Master 1</h3>
+        <div class="server-card" id="master1-card">
+            <div class="server-header">
+                <h3>Master 1</h3>
+                <div class="switch-container">
+                    <label class="switch">
+                        <input type="checkbox" checked id="master1-switch" onchange="toggleServer('master1')">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+            </div>
             <p>Primary master server in the Raft cluster</p>
             <div class="status-section">
                 <span class="status-indicator status-unknown" id="master1-status"></span>
                 <span id="master1-status-text">Checking status...</span>
             </div>
+            <div class="recovery-message" id="master1-recovery" style="display: none;">
+                <div class="recovery-indicator"></div>
+                <span>Failover in progress...</span>
+            </div>
             <a href="/master/1/">Access Master 1</a>
         </div>
         
-        <div class="server-card">
-            <h3>Master 2</h3>
+        <div class="server-card" id="master2-card">
+            <div class="server-header">
+                <h3>Master 2</h3>
+                <div class="switch-container">
+                    <label class="switch">
+                        <input type="checkbox" checked id="master2-switch" onchange="toggleServer('master2')">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+            </div>
             <p>Secondary master server in the Raft cluster</p>
             <div class="status-section">
                 <span class="status-indicator status-unknown" id="master2-status"></span>
                 <span id="master2-status-text">Checking status...</span>
             </div>
+            <div class="recovery-message" id="master2-recovery" style="display: none;">
+                <div class="recovery-indicator"></div>
+                <span>Failover in progress...</span>
+            </div>
             <a href="/master/2/">Access Master 2</a>
         </div>
         
-        <div class="server-card">
-            <h3>Master 3</h3>
+        <div class="server-card" id="master3-card">
+            <div class="server-header">
+                <h3>Master 3</h3>
+                <div class="switch-container">
+                    <label class="switch">
+                        <input type="checkbox" checked id="master3-switch" onchange="toggleServer('master3')">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+            </div>
             <p>Tertiary master server in the Raft cluster</p>
             <div class="status-section">
                 <span class="status-indicator status-unknown" id="master3-status"></span>
                 <span id="master3-status-text">Checking status...</span>
+            </div>
+            <div class="recovery-message" id="master3-recovery" style="display: none;">
+                <div class="recovery-indicator"></div>
+                <span>Failover in progress...</span>
             </div>
             <a href="/master/3/">Access Master 3</a>
         </div>
@@ -149,60 +377,672 @@
     
     <h2>Volume Servers</h2>
     <div class="server-grid">
-        <div class="server-card">
-            <h3>Volume 1</h3>
+        <div class="server-card" id="volume1-card">
+            <div class="server-header">
+                <h3>Volume 1</h3>
+                <div class="switch-container">
+                    <label class="switch">
+                        <input type="checkbox" checked id="volume1-switch" onchange="toggleServer('volume1')">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+            </div>
             <p>Volume server in Rack 1</p>
             <div class="status-section">
                 <span class="status-indicator status-unknown" id="volume1-status"></span>
                 <span id="volume1-status-text">Checking status...</span>
             </div>
+            <div class="recovery-message" id="volume1-recovery" style="display: none;">
+                <div class="recovery-indicator"></div>
+                <span>Rebalancing volumes...</span>
+            </div>
             <a href="/volume/1/">Access Volume 1</a>
         </div>
         
-        <div class="server-card">
-            <h3>Volume 2</h3>
+        <div class="server-card" id="volume2-card">
+            <div class="server-header">
+                <h3>Volume 2</h3>
+                <div class="switch-container">
+                    <label class="switch">
+                        <input type="checkbox" checked id="volume2-switch" onchange="toggleServer('volume2')">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+            </div>
             <p>Volume server in Rack 2</p>
             <div class="status-section">
                 <span class="status-indicator status-unknown" id="volume2-status"></span>
                 <span id="volume2-status-text">Checking status...</span>
             </div>
+            <div class="recovery-message" id="volume2-recovery" style="display: none;">
+                <div class="recovery-indicator"></div>
+                <span>Rebalancing volumes...</span>
+            </div>
             <a href="/volume/2/">Access Volume 2</a>
         </div>
         
-        <div class="server-card">
-            <h3>Volume 3</h3>
+        <div class="server-card" id="volume3-card">
+            <div class="server-header">
+                <h3>Volume 3</h3>
+                <div class="switch-container">
+                    <label class="switch">
+                        <input type="checkbox" checked id="volume3-switch" onchange="toggleServer('volume3')">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+            </div>
             <p>Volume server in Rack 3</p>
             <div class="status-section">
                 <span class="status-indicator status-unknown" id="volume3-status"></span>
                 <span id="volume3-status-text">Checking status...</span>
             </div>
+            <div class="recovery-message" id="volume3-recovery" style="display: none;">
+                <div class="recovery-indicator"></div>
+                <span>Rebalancing volumes...</span>
+            </div>
             <a href="/volume/3/">Access Volume 3</a>
+        </div>
+    </div>
+    
+    <h2>S3 Operations Stream</h2>
+    <div class="s3-operations-container" style="margin-top: 20px; margin-bottom: 30px;">
+        <div class="server-card" style="width: 100%;">
+            <h3>Live S3 Operations</h3>
+            <p>Real-time monitoring of S3 API operations against the SeaweedFS object store</p>
+            <div style="display: flex; margin-bottom: 10px;">
+                <div style="margin-right: 10px;">
+                    <span class="badge" style="background-color: #3498db; color: white; padding: 5px 10px; border-radius: 4px;">READ</span>
+                    <span id="read-counter">0</span>
+                </div>
+                <div style="margin-right: 10px;">
+                    <span class="badge" style="background-color: #2ecc71; color: white; padding: 5px 10px; border-radius: 4px;">WRITE</span>
+                    <span id="write-counter">0</span>
+                </div>
+                <div style="margin-right: 10px;">
+                    <span class="badge" style="background-color: #e74c3c; color: white; padding: 5px 10px; border-radius: 4px;">DELETE</span>
+                    <span id="delete-counter">0</span>
+                </div>
+                <div style="margin-left: auto; display: flex; align-items: center;">
+                    <div class="data-source-toggle" style="margin-right: 10px;">
+                        <label style="margin-right: 5px; font-size: 13px;">Data source:</label>
+                        <select id="data-source-select" style="padding: 5px; border-radius: 4px; border: 1px solid #ccc;">
+                            <option value="simulated">Simulated</option>
+                            <option value="real">Real S3 Activity</option>
+                        </select>
+                    </div>
+                    <button id="clear-log" style="background-color: #7f8c8d; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer;">Clear Log</button>
+                    <button id="pause-stream" style="background-color: #f39c12; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer;">Pause</button>
+                </div>
+            </div>
+            <textarea id="s3-operations-log" style="width: 100%; height: 200px; padding: 10px; font-family: monospace; border: 1px solid #ddd; border-radius: 4px; background-color: #f9f9f9; resize: vertical;" readonly></textarea>
         </div>
     </div>
 
     <footer>
-        <p>SeaweedFS High Availability Cluster Management - Version 3.96</p>
+        <p>SeaweedFS High Availability Cluster Management - Version 3.96 - harry.kodden - at - SURF . nl</p>
     </footer>
 
     <script>
-        // Simple function to check server status
+        // Global state to track server status
+        const serverStatus = {
+            master1: { isOnline: true, isLeader: true },
+            master2: { isOnline: true, isLeader: false },
+            master3: { isOnline: true, isLeader: false },
+            volume1: { isOnline: true },
+            volume2: { isOnline: true },
+            volume3: { isOnline: true }
+        };
+        
+        // Track cluster health
+        const clusterHealth = {
+            mastersOnline: 3,
+            volumesOnline: 3,
+            isHealthy: true,
+            failoverInProgress: false
+        };
+        
+        // Check server status and update UI
         async function checkServerStatus() {
-            // In a real implementation, these would make AJAX requests to check actual status
-            // For this demo, we'll just simulate statuses
-
-            // Set all to online for demo purposes
+            // Set all to online initially
             const servers = ['master1', 'master2', 'master3', 'volume1', 'volume2', 'volume3'];
             
             for (const server of servers) {
+                updateServerStatus(server);
+            }
+        }
+        
+        // Update visual status of a server
+        function updateServerStatus(server) {
+            const statusIndicator = document.getElementById(`${server}-status`);
+            const statusText = document.getElementById(`${server}-status-text`);
+            const serverCard = document.getElementById(`${server}-card`);
+            
+            if (serverStatus[server].isOnline) {
+                statusIndicator.className = "status-indicator status-online";
+                statusText.innerText = server.startsWith('master') && serverStatus[server].isLeader ? 
+                    "Online (Leader)" : "Online";
+                serverCard.classList.remove('offline');
+            } else {
+                statusIndicator.className = "status-indicator status-offline";
+                statusText.innerText = "Offline";
+                serverCard.classList.add('offline');
+            }
+        }
+        
+        // Toggle server on/off
+        function toggleServer(server) {
+            const isOnline = document.getElementById(`${server}-switch`).checked;
+            const serverCard = document.getElementById(`${server}-card`);
+            const recoveryMessage = document.getElementById(`${server}-recovery`);
+            
+            if (!isOnline) {
+                // Turn server off
+                serverStatus[server].isOnline = false;
+                
+                // Show failure animation
+                serverCard.classList.add('failing');
                 setTimeout(() => {
-                    document.getElementById(`${server}-status`).className = "status-indicator status-online";
-                    document.getElementById(`${server}-status-text`).innerText = "Online";
-                }, Math.random() * 1000); // Simulate different load times
+                    serverCard.classList.remove('failing');
+                }, 500);
+                
+                // Update counts
+                if (server.startsWith('master')) {
+                    clusterHealth.mastersOnline--;
+                } else {
+                    clusterHealth.volumesOnline--;
+                }
+                
+                // Trigger recovery if needed
+                if (needsRecovery(server)) {
+                    recoveryMessage.style.display = 'flex';
+                    simulateRecovery(server);
+                }
+            } else {
+                // Turn server on
+                serverStatus[server].isOnline = true;
+                recoveryMessage.style.display = 'none';
+                
+                // Update counts
+                if (server.startsWith('master')) {
+                    clusterHealth.mastersOnline++;
+                } else {
+                    clusterHealth.volumesOnline++;
+                }
+            }
+            
+            // Update UI
+            updateServerStatus(server);
+            updateClusterHealthIndicators();
+            
+            // Log event to S3 operations stream
+            if (window.s3Stream) {
+                const operation = {
+                    type: isOnline ? 'SERVER_START' : 'SERVER_STOP',
+                    timestamp: new Date().toISOString(),
+                    statusCode: 200,
+                    bucket: 'system',
+                    object: `${server}/${isOnline ? 'start' : 'stop'}`,
+                };
+                window.s3Stream.processOperation(operation);
+            }
+        }
+        
+        // Check if recovery is needed
+        function needsRecovery(server) {
+            if (server.startsWith('master')) {
+                // Master recovery needed if this was the leader
+                if (serverStatus[server].isLeader) {
+                    return true;
+                }
+                // Also needed if we're down to 1 master (for 3-node cluster)
+                return clusterHealth.mastersOnline <= 1;
+            } else {
+                // Volume recovery always needed to rebalance
+                return true;
+            }
+        }
+        
+        // Simulate recovery process
+        function simulateRecovery(failedServer) {
+            // Mark failover in progress
+            clusterHealth.failoverInProgress = true;
+            updateClusterHealthIndicators();
+            
+            setTimeout(() => {
+                if (failedServer.startsWith('master')) {
+                    // If leader failed, elect a new one
+                    if (serverStatus[failedServer].isLeader) {
+                        serverStatus[failedServer].isLeader = false;
+                        
+                        // Find next available master to promote
+                        const availableMasters = ['master1', 'master2', 'master3'].filter(m => 
+                            m !== failedServer && serverStatus[m].isOnline
+                        );
+                        
+                        if (availableMasters.length > 0) {
+                            const newLeader = availableMasters[0];
+                            serverStatus[newLeader].isLeader = true;
+                            updateServerStatus(newLeader);
+                            
+                            // Add log message about leadership change
+                            if (window.s3Stream) {
+                                const operation = {
+                                    type: 'LEADER_CHANGE',
+                                    timestamp: new Date().toISOString(),
+                                    statusCode: 200,
+                                    bucket: 'system',
+                                    object: `raft/${newLeader}/promoted-to-leader`,
+                                };
+                                window.s3Stream.processOperation(operation);
+                            }
+                        }
+                    }
+                } else {
+                    // For volume server, simulate volume redistribution
+                    // Add logs about rebalancing
+                    if (window.s3Stream) {
+                        const operation = {
+                            type: 'REBALANCE',
+                            timestamp: new Date().toISOString(),
+                            statusCode: 200,
+                            bucket: 'system',
+                            object: `volumes/rebalance/${Math.floor(Math.random() * 100)}`,
+                        };
+                        window.s3Stream.processOperation(operation);
+                    }
+                }
+                
+                // Recovery complete
+                setTimeout(() => {
+                    if (!serverStatus[failedServer].isOnline) {
+                        document.getElementById(`${failedServer}-recovery`).style.display = 'none';
+                        clusterHealth.failoverInProgress = false;
+                        updateClusterHealthIndicators();
+                    }
+                }, 2000);
+            }, 3000); // Simulate recovery process taking some time
+        }
+        
+        // Update cluster health indicators based on state
+        function updateClusterHealthIndicators() {
+            // Determine cluster health
+            clusterHealth.isHealthy = 
+                (clusterHealth.mastersOnline >= 2) && // Need majority of masters
+                (clusterHealth.volumesOnline >= 1);   // Need at least one volume
+                
+            // If failover is happening, show appropriate logs
+            if (clusterHealth.failoverInProgress && window.s3Stream) {
+                setTimeout(() => {
+                    const operation = {
+                        type: 'HEALTH_CHECK',
+                        timestamp: new Date().toISOString(),
+                        statusCode: clusterHealth.isHealthy ? 200 : 503,
+                        bucket: 'system',
+                        object: `cluster/health/${clusterHealth.isHealthy ? 'healthy' : 'degraded'}`,
+                    };
+                    window.s3Stream.processOperation(operation);
+                }, 1000);
+            }
+        }
+        
+        // S3 Operations Stream Functionality
+        class S3OperationsStream {
+            constructor() {
+                this.logElement = document.getElementById('s3-operations-log');
+                this.readCounter = document.getElementById('read-counter');
+                this.writeCounter = document.getElementById('write-counter');
+                this.deleteCounter = document.getElementById('delete-counter');
+                this.clearBtn = document.getElementById('clear-log');
+                this.pauseBtn = document.getElementById('pause-stream');
+                this.dataSourceSelect = document.getElementById('data-source-select');
+                
+                this.isPaused = false;
+                this.counts = { read: 0, write: 0, delete: 0 };
+                this.eventSource = null;
+                this.simulationInterval = null;
+                this.realFetchInterval = null;
+                this.lastFetchedTimestamp = new Date().toISOString();
+                this.dataSource = 'simulated'; // Default to simulated
+                
+                this.operationTypes = ['GET', 'PUT', 'DELETE', 'HEAD', 'LIST'];
+                this.buckets = ['mybucket', 'logs', 'backups', 'images', 'documents'];
+                this.objectPrefixes = ['users/', 'data/', 'reports/', 'config/', 'media/', 'backup/'];
+                this.systemEvents = ['SERVER_START', 'SERVER_STOP', 'LEADER_CHANGE', 'REBALANCE', 'HEALTH_CHECK'];
+                
+                // Setup event listeners
+                this.setupEventListeners();
+                
+                // Start with simulated stream
+                this.startDataStream('simulated');
+                
+                // Make this available globally
+                window.s3Stream = this;
+            }
+            
+            setupEventListeners() {
+                this.clearBtn.addEventListener('click', () => {
+                    this.logElement.value = '';
+                });
+                
+                this.pauseBtn.addEventListener('click', () => {
+                    this.isPaused = !this.isPaused;
+                    this.pauseBtn.textContent = this.isPaused ? 'Resume' : 'Pause';
+                    this.pauseBtn.style.backgroundColor = this.isPaused ? '#27ae60' : '#f39c12';
+                });
+                
+                this.dataSourceSelect.addEventListener('change', (e) => {
+                    const newDataSource = e.target.value;
+                    if (newDataSource !== this.dataSource) {
+                        this.startDataStream(newDataSource);
+                    }
+                });
+            }
+            
+            startDataStream(dataSource) {
+                // Clean up any existing stream
+                this.stopAllStreams();
+                
+                // Set new data source
+                this.dataSource = dataSource;
+                
+                // Start appropriate stream
+                if (dataSource === 'simulated') {
+                    this.setupSimulatedStream();
+                    this.logElement.value = "[System] Switched to simulated S3 operations\n" + this.logElement.value;
+                } else {
+                    this.setupRealS3Stream();
+                    this.logElement.value = "[System] Switched to real S3 operations from filer\n" + this.logElement.value;
+                }
+            }
+            
+            stopAllStreams() {
+                // Clear any existing intervals
+                if (this.simulationInterval) {
+                    clearInterval(this.simulationInterval);
+                    this.simulationInterval = null;
+                }
+                
+                if (this.realFetchInterval) {
+                    clearInterval(this.realFetchInterval);
+                    this.realFetchInterval = null;
+                }
+                
+                if (this.eventSource) {
+                    this.eventSource.close();
+                    this.eventSource = null;
+                }
+            }
+            
+            setupRealEventSource() {
+                // In a production environment, this would connect to a real server-sent events endpoint
+                this.eventSource = new EventSource('/api/s3-operations-stream');
+                
+                this.eventSource.onmessage = (event) => {
+                    if (this.isPaused) return;
+                    
+                    const data = JSON.parse(event.data);
+                    this.processOperation(data);
+                };
+                
+                this.eventSource.onerror = () => {
+                    console.error('EventSource failed, falling back to simulation');
+                    this.eventSource.close();
+                    this.startDataStream('simulated');
+                };
+            }
+            
+            setupSimulatedStream() {
+                // Simulate S3 operations since we don't have a real event stream
+                this.simulationInterval = setInterval(() => {
+                    if (this.isPaused) return;
+                    
+                    // Simulate an S3 operation
+                    const operation = this.generateRandomOperation();
+                    this.processOperation(operation);
+                }, 1000 + Math.random() * 2000); // Random interval between 1-3 seconds
+            }
+            
+            setupRealS3Stream() {
+                // Poll the filer logs for real S3 operations
+                this.realFetchInterval = setInterval(() => {
+                    if (this.isPaused) return;
+                    
+                    this.fetchRealS3Operations();
+                }, 2000); // Poll every 2 seconds
+                
+                // Initial fetch
+                this.fetchRealS3Operations();
+            }
+            
+            async fetchRealS3Operations() {
+                try {
+                    // Fetch operations from both filers for redundancy
+                    const response = await fetch('/filer/s3/logs?since=' + encodeURIComponent(this.lastFetchedTimestamp));
+                    
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch S3 logs: ${response.status}`);
+                    }
+                    
+                    const operations = await response.json();
+                    
+                    if (operations && operations.length > 0) {
+                        // Update last timestamp
+                        const timestamps = operations.map(op => op.timestamp);
+                        this.lastFetchedTimestamp = new Date(Math.max(...timestamps.map(t => new Date(t)))).toISOString();
+                        
+                        // Process each operation
+                        for (const operation of operations) {
+                            this.processOperation(operation);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error fetching real S3 operations:', error);
+                    // Add error to log
+                    if (!this.isPaused) {
+                        this.logElement.value = `[Error] Failed to fetch S3 operations: ${error.message}\n` + this.logElement.value;
+                    }
+                    
+                    // If we keep failing, maybe offer to switch back to simulation
+                    if (this.failedFetches && this.failedFetches > 3) {
+                        if (confirm('Failed to fetch real S3 operations. Switch back to simulated data?')) {
+                            this.dataSourceSelect.value = 'simulated';
+                            this.startDataStream('simulated');
+                        }
+                    } else {
+                        this.failedFetches = (this.failedFetches || 0) + 1;
+                    }
+                }
+            }
+            
+            generateRandomOperation() {
+                const operationType = this.operationTypes[Math.floor(Math.random() * this.operationTypes.length)];
+                const bucket = this.buckets[Math.floor(Math.random() * this.buckets.length)];
+                const objectPrefix = this.objectPrefixes[Math.floor(Math.random() * this.objectPrefixes.length)];
+                const objectName = `${objectPrefix}${Math.random().toString(36).substring(2, 15)}.${['jpg', 'pdf', 'json', 'txt', 'png'][Math.floor(Math.random() * 5)]}`;
+                const size = operationType === 'PUT' ? `${Math.floor(Math.random() * 10000)}KB` : '';
+                const statusCode = Math.random() > 0.95 ? 404 : 200; // 5% chance of 404
+                const timestamp = new Date().toISOString();
+                
+                return {
+                    type: operationType,
+                    bucket,
+                    object: objectName,
+                    size,
+                    statusCode,
+                    timestamp
+                };
+            }
+            
+            processOperation(operation) {
+                // Handle missing timestamp (add current time)
+                if (!operation.timestamp) {
+                    operation.timestamp = new Date().toISOString();
+                }
+                
+                // Add source indicator for real operations
+                let sourceIndicator = '';
+                if (this.dataSource === 'real' && !this.systemEvents.includes(operation.type)) {
+                    sourceIndicator = ' [REAL] ';
+                }
+                
+                // Determine operation category (read/write/delete)
+                let category;
+                if (['GET', 'HEAD', 'LIST'].includes(operation.type)) {
+                    category = 'read';
+                } else if (operation.type === 'PUT') {
+                    category = 'write';
+                } else if (operation.type === 'DELETE') {
+                    category = 'delete';
+                }
+                
+                // Format log entry
+                let logEntry;
+                
+                // Special formatting for system events
+                if (this.systemEvents.includes(operation.type) || operation.type === 'INFO') {
+                    // Format system events differently
+                    let eventPrefix = '[SYSTEM] ';
+                    
+                    switch(operation.type) {
+                        case 'SERVER_START':
+                            logEntry = `[${operation.timestamp}]${sourceIndicator}${eventPrefix}Server ${operation.object.split('/')[0]} started\n`;
+                            break;
+                        case 'SERVER_STOP':
+                            logEntry = `[${operation.timestamp}]${sourceIndicator}${eventPrefix}Server ${operation.object.split('/')[0]} stopped\n`;
+                            break;
+                        case 'LEADER_CHANGE':
+                            logEntry = `[${operation.timestamp}]${sourceIndicator}${eventPrefix}New leader elected: ${operation.object.split('/')[0]}\n`;
+                            break;
+                        case 'REBALANCE':
+                            logEntry = `[${operation.timestamp}]${sourceIndicator}${eventPrefix}Volume rebalancing in progress\n`;
+                            break;
+                        case 'HEALTH_CHECK':
+                            const status = operation.statusCode === 200 ? 'healthy' : 'degraded';
+                            logEntry = `[${operation.timestamp}]${sourceIndicator}${eventPrefix}Cluster health: ${status.toUpperCase()}\n`;
+                            break;
+                        case 'INFO':
+                            logEntry = `[${operation.timestamp}]${sourceIndicator}${eventPrefix}${operation.message || operation.object}\n`;
+                            break;
+                        default:
+                            logEntry = `[${operation.timestamp}]${sourceIndicator}${eventPrefix}${operation.type}: ${operation.object}\n`;
+                    }
+                } else {
+                    // Regular S3 operations
+                    // Update counter
+                    if (category) {
+                        this.counts[category]++;
+                        this[`${category}Counter`].textContent = this.counts[category];
+                    }
+                    
+                    // Format timestamp to be more readable if it's a full ISO string
+                    let displayTimestamp = operation.timestamp;
+                    if (displayTimestamp.length > 20) { // It's a full ISO timestamp
+                        const date = new Date(displayTimestamp);
+                        displayTimestamp = date.toLocaleTimeString();
+                    }
+                    
+                    logEntry = `[${displayTimestamp}]${sourceIndicator}${operation.type} ${operation.bucket}/${operation.object}${operation.size ? ` (${operation.size})` : ''} - ${operation.statusCode}\n`;
+                }
+                
+                // Add entry to log, highlighting system events
+                if (this.systemEvents.includes(operation.type)) {
+                    // System events stand out
+                    this.logElement.value = `★ ${logEntry}` + this.logElement.value;
+                } else {
+                    this.logElement.value = logEntry + this.logElement.value;
+                }
+                
+                // Trim log if it gets too long
+                if (this.logElement.value.length > 10000) {
+                    this.logElement.value = this.logElement.value.substring(0, 9000);
+                }
+            }
+            
+            destroy() {
+                if (this.eventSource) {
+                    this.eventSource.close();
+                }
+                
+                if (this.simulationInterval) {
+                    clearInterval(this.simulationInterval);
+                }
             }
         }
 
         // Run on page load
-        window.onload = checkServerStatus;
+        window.onload = function() {
+            // Initialize S3 operations stream first (to capture events)
+            const s3Stream = new S3OperationsStream();
+            
+            // Then check server status
+            checkServerStatus();
+            
+            // Add cluster system message to start
+            setTimeout(() => {
+                const operation = {
+                    type: 'HEALTH_CHECK',
+                    timestamp: new Date().toISOString(),
+                    statusCode: 200,
+                    bucket: 'system',
+                    object: 'cluster/health/startup'
+                };
+                s3Stream.processOperation(operation);
+                
+                // Add a welcome message about the S3 operations stream
+                const welcomeMsg = {
+                    type: 'INFO',
+                    timestamp: new Date().toISOString(),
+                    statusCode: 200,
+                    bucket: 'system',
+                    object: 'info/stream'
+                };
+                s3Stream.processOperation({
+                    ...welcomeMsg,
+                    message: "S3 operations can be viewed in real-time or simulated. Toggle using the dropdown."
+                });
+                
+                // If real operations are available, suggest switching
+                setTimeout(() => {
+                    fetch('/filer/s3/logs')
+                        .then(response => {
+                            if (response.ok) {
+                                const switchMsg = {
+                                    type: 'INFO',
+                                    timestamp: new Date().toISOString(),
+                                    statusCode: 200,
+                                    bucket: 'system',
+                                    object: 'info/real-data'
+                                };
+                                s3Stream.processOperation({
+                                    ...switchMsg,
+                                    message: "Real S3 operations are available. Switch using the dropdown."
+                                });
+                            }
+                        })
+                        .catch(() => {
+                            // No need to do anything if fetch fails
+                        });
+                        
+                    // Add info about the analytics notebook
+                    const notebookMsg = {
+                        type: 'INFO',
+                        timestamp: new Date().toISOString(),
+                        statusCode: 200,
+                        bucket: 'system',
+                        object: 'info/notebook'
+                    };
+                    s3Stream.processOperation({
+                        ...notebookMsg,
+                        message: "A Python notebook for analyzing S3 operations is available at seaweedfs_api_analysis.ipynb"
+                    });
+                }, 3000);
+            }, 1000);
+            
+            // Cleanup on page unload
+            window.addEventListener('beforeunload', () => {
+                s3Stream.destroy();
+            });
+        };
     </script>
 </body>
 </html>
