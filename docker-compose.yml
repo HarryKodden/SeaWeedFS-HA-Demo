@@ -1,0 +1,238 @@
+services:
+  # Multiple Master servers in a Raft cluster for high availability
+  master1:
+    image: chrislusf/seaweedfs
+    hostname: master1
+    networks:
+      - internal
+    command: "master -port=9333 -ip=master1 -mdir=/data -peers=master1:9333,master2:9333,master3:9333"
+    volumes:
+      - master1_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://master1:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  master2:
+    image: chrislusf/seaweedfs
+    hostname: master2
+    networks:
+      - internal
+    command: "master -port=9333 -ip=master2 -mdir=/data -peers=master1:9333,master2:9333,master3:9333"
+    volumes:
+      - master2_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://master2:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  master3:
+    image: chrislusf/seaweedfs
+    hostname: master3
+    networks:
+      - internal
+    command: "master -port=9333 -ip=master3 -mdir=/data -peers=master1:9333,master2:9333,master3:9333"
+    volumes:
+      - master3_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://master3:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Multiple Volume servers for data redundancy
+  volume1:
+    image: chrislusf/seaweedfs
+    hostname: volume1
+    networks:
+      - internal
+    depends_on:
+      master1:
+        condition: service_healthy
+    command: "volume -port=8080 -ip=volume1 -mserver=master1:9333,master2:9333,master3:9333 -dir=/data -max=5 -rack=rack1"
+    volumes:
+      - volume1_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://volume1:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  volume2:
+    image: chrislusf/seaweedfs
+    hostname: volume2
+    networks:
+      - internal
+    depends_on:
+      master1:
+        condition: service_healthy
+    command: "volume -port=8080 -ip=volume2 -mserver=master1:9333,master2:9333,master3:9333 -dir=/data -max=5 -rack=rack2"
+    volumes:
+      - volume2_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://volume2:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  volume3:
+    image: chrislusf/seaweedfs
+    hostname: volume3
+    networks:
+      - internal
+    depends_on:
+      master1:
+        condition: service_healthy
+    command: "volume -port=8080 -ip=volume3 -mserver=master1:9333,master2:9333,master3:9333 -dir=/data -max=5 -rack=rack3"
+    volumes:
+      - volume3_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://volume3:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Filer servers with redundancy
+  filer1:
+    image: chrislusf/seaweedfs
+    hostname: filer1
+    networks:
+      - internal
+    depends_on:
+      master1:
+        condition: service_healthy
+      volume1:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-seaweedfs}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-seaweedfs}
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    volumes:
+      - filer1_data:/data
+    command: 'filer -master=master1:9333,master2:9333,master3:9333 -ip=filer1 -port=8888 -port.grpc=18888 -s3 -s3.port=8333 -s3.allowEmptyFolder=true -dataCenter=dc1 -maxMB=1024'
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://filer1:8888/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  filer2:
+    image: chrislusf/seaweedfs
+    hostname: filer2
+    networks:
+      - internal
+    depends_on:
+      master1:
+        condition: service_healthy
+      volume1:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-seaweedfs}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-seaweedfs}
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    volumes:
+      - filer2_data:/data
+    command: 'filer -master=master1:9333,master2:9333,master3:9333 -ip=filer2 -port=8888 -port.grpc=18888 -s3 -s3.port=8333 -s3.allowEmptyFolder=true -dataCenter=dc1 -maxMB=1024'
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://filer2:8888/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Load balancer for filer service
+  nginx:
+    image: nginx:latest
+    ports:
+      - "9080:80"    # Filer service
+      - "9333:9333"  # S3 API endpoint
+      - "9500:9500"  # Cluster endpoint
+      - "18888:18888" # filer1 gRPC 
+      - "18889:18889" # filer2 gRPC
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./.htpasswd:/etc/nginx/.htpasswd
+      - ./html:/etc/nginx/html   
+    networks:
+      - internal
+      - external
+    depends_on:
+      filer1:
+        condition: service_healthy
+      filer2:
+        condition: service_healthy
+      master1:
+        condition: service_healthy
+      master2:
+        condition: service_healthy
+      master3:
+        condition: service_healthy
+      volume1:
+        condition: service_healthy
+      volume2:
+        condition: service_healthy
+      volume3:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      # Main filer access
+      - "traefik.http.routers.seaweed-ha.rule=Host(`seaweed-ha.${DOMAIN}`)"
+      - "traefik.http.routers.seaweed-ha.tls=true"
+      - "traefik.http.routers.seaweed-ha.tls.certresolver=le"
+      - "traefik.http.routers.seaweed-ha.entrypoints=https"
+      - "traefik.http.routers.seaweed-ha.service=seaweed-ha"
+#     - "traefik.http.routers.seaweed-ha.middlewares=restricted@file"
+      - "traefik.http.services.seaweed-ha.loadbalancer.server.port=80"
+
+      # S3 API access
+      - "traefik.http.routers.seaweed-ha-s3.rule=Host(`seaweed-ha-s3.${DOMAIN}`)"
+      - "traefik.http.routers.seaweed-ha-s3.tls=true"
+      - "traefik.http.routers.seaweed-ha-s3.tls.certresolver=le"
+      - "traefik.http.routers.seaweed-ha-s3.entrypoints=https"
+      - "traefik.http.routers.seaweed-ha-s3.service=seaweed-ha-s3"
+#     - "traefik.http.routers.seaweed-ha-s3.middlewares=restricted@file"
+      - "traefik.http.services.seaweed-ha-s3.loadbalancer.server.port=9333"
+      
+      # Cluster access route (for master and volume access)
+      - "traefik.http.routers.seaweed-ha-cluster.rule=Host(`seaweed-ha-cluster.${DOMAIN}`)"
+      - "traefik.http.routers.seaweed-ha-cluster.tls=true"
+      - "traefik.http.routers.seaweed-ha-cluster.tls.certresolver=le"
+      - "traefik.http.routers.seaweed-ha-cluster.entrypoints=https"
+      - "traefik.http.routers.seaweed-ha-cluster.service=seaweed-ha-cluster"
+#     - "traefik.http.routers.seaweed-ha-cluster.middlewares=restricted@file"
+      - "traefik.http.services.seaweed-ha-cluster.loadbalancer.server.port=9500"
+
+networks:
+  external:
+    name: external
+    external: true
+  internal:
+    name: internal
+    external: true
+
+volumes:
+  master1_data:
+  master2_data:
+  master3_data:
+  volume1_data:
+  volume2_data:
+  volume3_data:
+  filer1_data:
+  filer2_data:
