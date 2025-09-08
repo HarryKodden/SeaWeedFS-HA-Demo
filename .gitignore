@@ -3,5 +3,4 @@
 .htpasswd
 .vscode/
 tmp/
-
-
+__pycache__/

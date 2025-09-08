@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            padding: 20px;
+            background-color: #f7f9fc;
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        .panel {
+            margin-bottom: 20px;
+            background-color: white;
+            border-radius: 4px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .panel-heading {
+            background-color: #f5f5f5;
+            border-bottom: 1px solid #ddd;
+            padding: 15px;
+        }
+        .panel-body {
+            padding: 15px;
+        }
+        .stat-value {
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .table {
+            margin-bottom: 0;
+        }
+        .progress {
+            margin-bottom: 10px;
+        }
+        .back-link {
+            margin-bottom: 20px;
+            display: inline-block;
+        }
+        .node-info {
+            margin-bottom: 20px;
+        }
+        .health-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .health-good {
+            background-color: #27ae60;
+        }
+        .health-warning {
+            background-color: #f39c12;
+        }
+        .health-error {
+            background-color: #e74c3c;
+        }
+        .raw-api-links {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        .raw-api-links h4 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        .raw-api-links ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+        .raw-api-links li {
+            margin-bottom: 8px;
+        }
+        .raw-api-links a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        .raw-api-links a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <a href="/dashboard/" class="btn btn-primary back-link">
+            <span class="glyphicon glyphicon-arrow-left"></span> Back to Dashboard
+        </a>
+
+        <h1>{{ node_title }}</h1>
+
+        <div class="node-info alert alert-info">
+            <strong>{{ node_type }} Information:</strong> {{ node_description }}
+        </div>
+
+        <div class="row">
+            <div class="col-md-6">
+                <div class="panel panel-default">
+                    <div class="panel-heading">
+                        <h3 class="panel-title">{{ node_type }} Status</h3>
+                    </div>
+                    <div class="panel-body">
+                        <table class="table table-bordered">
+                            {% for key, value in status_items.items() %}
+                            <tr>
+                                <td>{{ key }}:</td>
+                                <td class="stat-value">{{ value }}</td>
+                            </tr>
+                            {% endfor %}
+                            <tr>
+                                <td>Health Status:</td>
+                                <td class="stat-value">
+                                    <span class="health-indicator health-good"></span>
+                                    <span id="health-status">Healthy</span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>Last Updated:</td>
+                                <td class="stat-value" id="uptime">Loading...</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                {% if connected_components %}
+                <div class="panel panel-default">
+                    <div class="panel-heading">
+                        <h3 class="panel-title">Connected Components</h3>
+                    </div>
+                    <div class="panel-body">
+                        <ul class="list-group">
+                            {% for component in connected_components %}
+                            <li class="list-group-item">
+                                <span class="health-indicator health-good"></span>
+                                {{ component.name }} ({{ component.path }})
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="col-md-6">
+                {% if storage_stats %}
+                <div class="panel panel-default">
+                    <div class="panel-heading">
+                        <h3 class="panel-title">Storage Statistics</h3>
+                    </div>
+                    <div class="panel-body">
+                        <table class="table table-bordered">
+                            {% for key, value in storage_stats.items() %}
+                            <tr>
+                                <td>{{ key }}:</td>
+                                <td class="stat-value" id="{{ value.id }}">{{ value.default }}</td>
+                            </tr>
+                            {% endfor %}
+                        </table>
+
+                        {% if storage_usage_bar %}
+                        <h4>Storage Usage</h4>
+                        <div class="progress">
+                            <div id="storage-usage-bar" class="progress-bar" role="progressbar"
+                                 aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%">
+                                0%
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if s3_stats %}
+                <div class="panel panel-default">
+                    <div class="panel-heading">
+                        <h3 class="panel-title">S3 Operations Statistics</h3>
+                    </div>
+                    <div class="panel-body">
+                        <table class="table table-bordered">
+                            {% for key, value in s3_stats.items() %}
+                            <tr>
+                                <td>{{ key }}:</td>
+                                <td class="stat-value" id="{{ value.id }}">{{ value.default }}</td>
+                            </tr>
+                            {% endfor %}
+                        </table>
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if operations %}
+                <div class="panel panel-default">
+                    <div class="panel-heading">
+                        <h3 class="panel-title">{{ operations_title or "Recent Operations" }}</h3>
+                    </div>
+                    <div class="panel-body">
+                        <table class="table table-bordered">
+                            {% for key, value in operations.items() %}
+                            <tr>
+                                <td>{{ key }}:</td>
+                                <td class="stat-value" id="{{ value.id }}">{{ value.default }}</td>
+                            </tr>
+                            {% endfor %}
+                        </table>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if api_links %}
+        <div class="raw-api-links">
+            <h4>Direct API Access</h4>
+            <ul>
+                {% for link in api_links %}
+                <li><a href="{{ link.url }}" target="_blank">{{ link.text }}</a></li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        // Update uptime
+        function updateUptime() {
+            const now = new Date();
+            document.getElementById('uptime').textContent = now.toLocaleString();
+        }
+
+        // Update stats - will be customized per node type
+        {{ custom_js|default('') }}
+
+        // Initialize
+        updateUptime();
+        if (typeof updateStats === 'function') {
+            updateStats();
+        }
+
+        // Update every 30 seconds
+        setInterval(updateUptime, 30000);
+        if (typeof updateStats === 'function') {
+            setInterval(updateStats, 10000);
+        }
+    </script>
+</body>
+</html>
