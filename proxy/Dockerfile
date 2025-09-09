@@ -33,7 +33,7 @@ COPY cluster.html /etc/nginx/html/
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Expose ports
-EXPOSE 80 9333
+EXPOSE 80 8080 8333
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
