@@ -18,9 +18,9 @@ The setup includes:
 
 ## Port Assignments
 
-- `9080`: Filer server web interface
-- `9333`: S3 API endpoint
-- `9500`: Cluster Management Dashboard and REST API (password protected)
+- `80`: Cluster Management Dashboard and REST API (password protected)
+- `8080`: Filer server web interface
+- `8333`: S3 API endpoint
 
 ## Quick Start
 
@@ -46,7 +46,7 @@ The setup includes:
 ### Web Interface
 Access the cluster management dashboard at:
 ```
-http://localhost:9500/
+http://localhost:80/
 ```
 
 **Features**:
@@ -63,7 +63,7 @@ The cluster provides a comprehensive REST API for programmatic access:
 #### Interactive API Documentation
 Explore and test all API endpoints interactively:
 ```
-http://localhost:9500/api/docs
+http://localhost:80/api/docs
 ```
 
 This provides a **Swagger UI** interface where you can:
@@ -98,39 +98,39 @@ This provides a **Swagger UI** interface where you can:
 
 **Check container status**:
 ```bash
-curl http://localhost:9500/api/containers/master1
+curl http://localhost:80/api/containers/master1
 ```
 
 **Start a container**:
 ```bash
-curl -X POST http://localhost:9500/api/containers/volume1
+curl -X POST http://localhost:80/api/containers/volume1
 ```
 
 **Stop a container**:
 ```bash
-curl -X DELETE http://localhost:9500/api/containers/volume1
+curl -X DELETE http://localhost:80/api/containers/volume1
 ```
 
 **Get S3 operations**:
 ```bash
-curl http://localhost:9500/s3-operations
+curl http://localhost:80/s3-operations
 ```
 
 ## S3 API Usage
 
-The S3 API is accessible at `http://localhost:9333/` and can be used with standard S3 tools:
+The S3 API is accessible at `http://localhost:8333/` and can be used with standard S3 tools:
 
 ```bash
 # Configure AWS CLI
 AWS_ACCESS_KEY_ID="your_key_id" \
 AWS_SECRET_ACCESS_KEY="your_secret_key" \
-aws --endpoint-url http://localhost:9333 s3 ls
+aws --endpoint-url http://localhost:8333 s3 ls
 
 # Upload a file
-aws --endpoint-url http://localhost:9333 s3 cp file.txt s3://mybucket/
+aws --endpoint-url http://localhost:8333 s3 cp file.txt s3://mybucket/
 
 # List buckets
-aws --endpoint-url http://localhost:9333 s3 ls
+aws --endpoint-url http://localhost:8333 s3 ls
 ```
 
 ## File Structure
@@ -195,7 +195,7 @@ docker compose logs master1
 2. **S3 operations not showing**:
    ```bash
    # Check filer connectivity
-   curl http://localhost:9080/
+   curl http://localhost:8080/
    # Restart filers
    docker compose restart filer1 filer2
    ```
@@ -220,10 +220,10 @@ docker compose logs master1
 
 ```bash
 # Test all endpoints
-curl http://localhost:9080/                    # Filer UI
-curl http://localhost:9333/                    # S3 API (should return 403)
-curl -u admin:password http://localhost:9500/  # Dashboard
-curl http://localhost:9500/api/docs           # API documentation
+curl http://localhost:8080/                    # Filer UI
+curl http://localhost:8333/                    # S3 API (should return 403)
+curl -u admin:password http://localhost:80/    # Dashboard
+curl http://localhost:80/api/docs             # API documentation
 curl http://localhost:8080/health             # API health check
 ```
 

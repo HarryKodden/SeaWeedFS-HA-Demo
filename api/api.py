@@ -6,10 +6,13 @@ import subprocess
 import json
 import urllib.parse
 import urllib.request
-import urllib.error
+import requests
 from datetime import datetime, timezone
 import base64
 import time
+import os
+import boto3
+from botocore.exceptions import ClientError
 
 class ClusterAPIHandler(http.server.BaseHTTPRequestHandler):
 
@@ -55,6 +58,37 @@ class ClusterAPIHandler(http.server.BaseHTTPRequestHandler):
         elif len(path_parts) >= 2 and path_parts[0] == 'containers':
             container_name = path_parts[1]
             self.handle_container_status(container_name)
+        elif len(path_parts) >= 5 and path_parts[0] == 'api' and path_parts[1] == 's3' and path_parts[2] == 'buckets':
+            bucket_name = path_parts[3]
+            object_key = '/'.join(path_parts[5:])  # Handle object keys with slashes
+            self.handle_s3_object_read(bucket_name, object_key)
+        else:
+            self.send_error(404, "Endpoint not found")
+
+        if parsed_path.path == '/health':
+            self.handle_health_check()
+        elif parsed_path.path == '/api/docs/openapi.json':
+            self.serve_openapi_spec()
+        elif parsed_path.path == '/api/docs':
+            self.handle_api_docs()
+        elif parsed_path.path == '/s3-operations':
+            self.handle_s3_operations()
+        elif len(path_parts) >= 4 and path_parts[0] == 'api' and path_parts[1] == 'containers' and path_parts[3] == 'health':
+            container_name = path_parts[2]
+            self.handle_container_health(container_name)
+        elif len(path_parts) >= 3 and path_parts[0] == 'api' and path_parts[1] == 'containers':
+            container_name = path_parts[2]
+            self.handle_container_status(container_name)
+        elif len(path_parts) >= 3 and path_parts[0] == 'containers' and path_parts[2] == 'health':
+            container_name = path_parts[1]
+            self.handle_container_health(container_name)
+        elif len(path_parts) >= 2 and path_parts[0] == 'containers':
+            container_name = path_parts[1]
+            self.handle_container_status(container_name)
+        elif len(path_parts) >= 5 and path_parts[0] == 'api' and path_parts[1] == 's3' and path_parts[2] == 'buckets':
+            bucket_name = path_parts[3]
+            object_key = '/'.join(path_parts[5:])  # Handle object keys with slashes
+            self.handle_s3_object_read(bucket_name, object_key)
         else:
             self.send_error(404, "Endpoint not found")
 
@@ -68,6 +102,10 @@ class ClusterAPIHandler(http.server.BaseHTTPRequestHandler):
         elif len(path_parts) >= 2 and path_parts[0] == 'containers':
             container_name = path_parts[1]
             self.handle_container_start(container_name)
+        elif len(path_parts) >= 5 and path_parts[0] == 'api' and path_parts[1] == 's3' and path_parts[2] == 'buckets':
+            bucket_name = path_parts[3]
+            object_key = '/'.join(path_parts[5:])  # Handle object keys with slashes
+            self.handle_s3_object_create(bucket_name, object_key)
         else:
             self.send_error(404, "Endpoint not found")
 
@@ -81,6 +119,10 @@ class ClusterAPIHandler(http.server.BaseHTTPRequestHandler):
         elif len(path_parts) >= 2 and path_parts[0] == 'containers':
             container_name = path_parts[1]
             self.handle_container_stop(container_name)
+        elif len(path_parts) >= 5 and path_parts[0] == 'api' and path_parts[1] == 's3' and path_parts[2] == 'buckets':
+            bucket_name = path_parts[3]
+            object_key = '/'.join(path_parts[5:])  # Handle object keys with slashes
+            self.handle_s3_object_delete(bucket_name, object_key)
         else:
             self.send_error(404, "Endpoint not found")
 
@@ -138,6 +180,50 @@ class ClusterAPIHandler(http.server.BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(result.encode())
+
+        except Exception as e:
+            self.send_error(500, f"Internal server error: {str(e)}")
+
+    def handle_s3_object_create(self, bucket_name, object_key):
+        try:
+            # Get size parameter from query string
+            parsed_path = urllib.parse.urlparse(self.path)
+            query_params = urllib.parse.parse_qs(parsed_path.query)
+            size_kb = int(query_params.get('size_kb', [10])[0])
+            
+            result = create_bucket_object(bucket_name, object_key, size_kb)
+            
+            self.send_response(200 if result['success'] else 400)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode())
+
+        except Exception as e:
+            self.send_error(500, f"Internal server error: {str(e)}")
+
+    def handle_s3_object_read(self, bucket_name, object_key):
+        try:
+            result = read_bucket_object(bucket_name, object_key)
+            
+            self.send_response(200 if result['success'] else 404)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode())
+
+        except Exception as e:
+            self.send_error(500, f"Internal server error: {str(e)}")
+
+    def handle_s3_object_delete(self, bucket_name, object_key):
+        try:
+            result = delete_bucket_object(bucket_name, object_key)
+            
+            self.send_response(200 if result['success'] else 400)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode())
 
         except Exception as e:
             self.send_error(500, f"Internal server error: {str(e)}")
@@ -750,39 +836,208 @@ def check_container_health(short_name):
         return 'unhealthy'
 
 
-def get_s3_operations(since_timestamp=None):
-    """Get S3 operations (mock data for demo)"""
-    current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+def get_s3_client():
+    """Create and return S3 client using environment variables"""
+    return boto3.client(
+        's3',
+        endpoint_url=os.getenv('SEAWEED_S3_URL', 'http://localhost:9333'),
+        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+        region_name='us-east-1'  # SeaweedFS doesn't use regions, but boto3 requires it
+    )
+
+
+def generate_lorem_ipsum(size_kb=10):
+    """Generate lorem ipsum text of approximately the specified size in KB"""
+    lorem_base = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
     
-    # Mock S3 operations data
-    operations = [
-        {
-            "type": "GET",
-            "bucket": "user-uploads",
-            "object": "photos/vacation-2024/img_001.jpg",
-            "size": "",
-            "statusCode": 200,
-            "timestamp": current_time
-        },
-        {
-            "type": "PUT", 
-            "bucket": "backups",
-            "object": "database/daily_backup.sql.gz",
-            "size": "15432KB",
-            "statusCode": 200,
-            "timestamp": current_time
-        },
-        {
-            "type": "LIST",
-            "bucket": "documents",
-            "object": "reports/",
-            "size": "",
-            "statusCode": 200,
-            "timestamp": current_time
+    # Calculate how many times to repeat to reach approximately size_kb
+    base_size = len(lorem_base.encode('utf-8'))
+    repetitions = max(1, (size_kb * 1024) // base_size)
+    
+    content = (lorem_base + " ") * repetitions
+    return content[:size_kb * 1024]  # Trim to exact size
+
+
+def create_bucket_object(bucket_name, object_key, size_kb=10):
+    """Create a new object in the specified bucket with lorem ipsum content"""
+    try:
+        base_url = get_s3_base_url()
+        
+        # Generate lorem ipsum content
+        content = generate_lorem_ipsum(size_kb)
+        
+        # Create bucket first (PUT request to bucket URL)
+        bucket_url = f"{base_url}/{bucket_name}"
+        requests.put(bucket_url)
+        
+        # Put object
+        object_url = f"{bucket_url}/{object_key}"
+        response = requests.put(object_url, data=content)
+        
+        if response.status_code in [200, 201]:
+            return {
+                "success": True,
+                "message": f"Object '{object_key}' created in bucket '{bucket_name}'",
+                "size": f"{len(content)} bytes"
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"Failed to create object: HTTP {response.status_code}",
+                "size": "0 bytes"
+            }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Failed to create object: {str(e)}",
+            "size": "0 bytes"
         }
-    ]
-    
-    return json.dumps(operations)
+
+
+def read_bucket_object(bucket_name, object_key):
+    """Read an object from the specified bucket"""
+    try:
+        base_url = get_s3_base_url()
+        
+        object_url = f"{base_url}/{bucket_name}/{object_key}"
+        response = requests.get(object_url)
+        
+        if response.status_code == 200:
+            content = response.text
+            return {
+                "success": True,
+                "content": content[:500] + "..." if len(content) > 500 else content,
+                "size": f"{len(content)} bytes",
+                "last_modified": response.headers.get('Last-Modified', 'Unknown')
+            }
+        else:
+            return {
+                "success": False,
+                "content": "",
+                "size": "0 bytes",
+                "error": f"HTTP {response.status_code}: {response.text}"
+            }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "content": "",
+            "size": "0 bytes",
+            "error": str(e)
+        }
+
+
+def delete_bucket_object(bucket_name, object_key):
+    """Delete an object from the specified bucket"""
+    try:
+        base_url = get_s3_base_url()
+        
+        object_url = f"{base_url}/{bucket_name}/{object_key}"
+        response = requests.delete(object_url)
+        
+        if response.status_code in [200, 204]:
+            return {
+                "success": True,
+                "message": f"Object '{object_key}' deleted from bucket '{bucket_name}'"
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"Failed to delete object: HTTP {response.status_code}"
+            }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Failed to delete object: {str(e)}"
+        }
+
+
+def get_s3_client():
+    """Create and return S3 client using environment variables"""
+    return boto3.client(
+        's3',
+        endpoint_url=os.getenv('SEAWEED_S3_URL', 'http://nginx:9333'),
+        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+        region_name='us-east-1'  # SeaweedFS doesn't use regions, but boto3 requires it
+    )
+
+
+def get_s3_base_url():
+    """Get the base S3 URL for direct HTTP requests"""
+    return os.getenv('SEAWEED_S3_URL', 'http://nginx:9333')
+
+
+def get_s3_auth():
+    """Get S3 authentication tuple"""
+    return (os.getenv('AWS_ACCESS_KEY_ID'), os.getenv('AWS_SECRET_ACCESS_KEY'))
+
+
+def get_s3_operations(since_timestamp=None):
+    """Get actual S3 operations from SeaweedFS S3 API"""
+    try:
+        s3_client = get_s3_client()
+        
+        # List all buckets
+        buckets = s3_client.list_buckets()
+        operations = []
+        
+        for bucket in buckets['Buckets']:
+            bucket_name = bucket['Name']
+            
+            try:
+                # List objects in each bucket
+                objects = s3_client.list_objects_v2(Bucket=bucket_name)
+                
+                if 'Contents' in objects:
+                    for obj in objects['Contents']:
+                        operations.append({
+                            "type": "LIST",
+                            "bucket": bucket_name,
+                            "object": obj['Key'],
+                            "size": f"{obj['Size']} bytes",
+                            "statusCode": 200,
+                            "timestamp": obj['LastModified'].strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+                        })
+                        
+            except ClientError as e:
+                # Bucket might be empty or inaccessible
+                operations.append({
+                    "type": "LIST",
+                    "bucket": bucket_name,
+                    "object": "",
+                    "size": "",
+                    "statusCode": 404 if e.response['Error']['Code'] == 'NoSuchBucket' else 500,
+                    "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+                })
+        
+        # If no buckets exist, return empty list
+        if not operations:
+            operations = [{
+                "type": "INFO",
+                "bucket": "",
+                "object": "",
+                "size": "",
+                "statusCode": 200,
+                "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            }]
+            
+        return json.dumps(operations)
+        
+    except Exception as e:
+        # Return error information
+        error_op = [{
+            "type": "ERROR",
+            "bucket": "",
+            "object": "",
+            "size": "",
+            "statusCode": 500,
+            "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+        }]
+        return json.dumps(error_op)
 
 
 if __name__ == '__main__':

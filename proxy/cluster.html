@@ -69,6 +69,9 @@
         .status-online {
             background-color: #2ecc71;
         }
+        .status-offline {
+            background-color: #e74c3c;
+        }
         .status-unknown {
             background-color: #f39c12;
         }
@@ -576,6 +579,40 @@
         </div>
     </div>
 
+    <h2>S3 Object Management</h2>
+    <div class="s3-operations-container" style="margin-top: 20px; margin-bottom: 30px;">
+        <div class="server-card" style="width: 100%;">
+            <h3>Manage S3 Objects</h3>
+            <p>Create, read, and delete objects in SeaweedFS S3 buckets</p>
+            
+            <div style="display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 20px;">
+                <div style="flex: 1; min-width: 200px;">
+                    <label for="bucket-name" style="display: block; margin-bottom: 5px; font-weight: bold;">Bucket Name:</label>
+                    <input type="text" id="bucket-name" placeholder="e.g., test-bucket" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                </div>
+                <div style="flex: 1; min-width: 200px;">
+                    <label for="object-key" style="display: block; margin-bottom: 5px; font-weight: bold;">Object Key:</label>
+                    <input type="text" id="object-key" placeholder="e.g., folder/file.txt" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                </div>
+                <div style="flex: 1; min-width: 150px;">
+                    <label for="object-size" style="display: block; margin-bottom: 5px; font-weight: bold;">Size (KB):</label>
+                    <input type="number" id="object-size" value="10" min="1" max="100" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                <button id="create-object-btn" style="background-color: #2ecc71; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold;">Create Object</button>
+                <button id="read-object-btn" style="background-color: #3498db; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold;">Read Object</button>
+                <button id="delete-object-btn" style="background-color: #e74c3c; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold;">Delete Object</button>
+            </div>
+            
+            <div id="s3-result" style="background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; padding: 15px; display: none;">
+                <h4 style="margin-top: 0; color: #495057;">Operation Result</h4>
+                <pre id="s3-result-content" style="background-color: white; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; white-space: pre-wrap; font-family: monospace;"></pre>
+            </div>
+        </div>
+    </div>
+
     <footer>
         <p>SeaweedFS High Availability Cluster Management - Version 3.96 - harry.kodden - at - SURF . nl</p>
     </footer>
@@ -610,15 +647,15 @@
             for (const server of servers) {
                 try {
                     // Check container status
-                    const response = await fetch(`/api/containers/${server}`, {
-                        headers: {
-                            'Authorization': 'Basic ' + btoa('admin:seaweedadmin')
-                        }
-                    });
+                    const response = await fetch(`/api/containers/${server}`);
+                    // Note: Authentication is handled by nginx proxy, no credentials needed in JavaScript
                     
                     if (response.ok) {
-                        const status = await response.text();
-                        serverStatus[server].isOnline = (status.trim() === 'running');
+                        const statusText = await response.text();
+                        // Extract the status from the response (handle malformed response with headers)
+                        const statusMatch = statusText.match(/^(running|stopped|not_found)/);
+                        const status = statusMatch ? statusMatch[1] : 'unknown';
+                        serverStatus[server].isOnline = (status === 'running');
                         
                         // Update master leadership status (simplified - in real implementation would check Raft status)
                         if (server.startsWith('master') && serverStatus[server].isOnline) {
@@ -631,15 +668,19 @@
                     
                     // Check health status
                     try {
-                        const healthResponse = await fetch(`/api/containers/${server}/health`, {
-                            headers: {
-                                'Authorization': 'Basic ' + btoa('admin:seaweedadmin')
-                            }
-                        });
+                        const healthResponse = await fetch(`/api/containers/${server}/health`);
+                        // Note: Authentication is handled by nginx proxy, no credentials needed in JavaScript
                         
                         if (healthResponse.ok) {
-                            const healthData = await healthResponse.json();
-                            serverStatus[server].isHealthy = (healthData.status === 'healthy');
+                            const healthText = await healthResponse.text();
+                            // Extract JSON from malformed response
+                            const jsonMatch = healthText.match(/^\{.*\}/);
+                            if (jsonMatch) {
+                                const healthData = JSON.parse(jsonMatch[0]);
+                                serverStatus[server].isHealthy = (healthData.status === 'healthy');
+                            } else {
+                                serverStatus[server].isHealthy = false;
+                            }
                         } else {
                             serverStatus[server].isHealthy = false;
                         }
@@ -709,18 +750,14 @@
                 if (!isOnline) {
                     // Stop container
                     response = await fetch(`/api/containers/${server}`, {
-                        method: 'DELETE',
-                        headers: {
-                            'Authorization': 'Basic ' + btoa('admin:seaweedadmin')
-                        }
+                        method: 'DELETE'
+                        // Note: Authentication is handled by nginx proxy, no credentials needed in JavaScript
                     });
                 } else {
                     // Start container
                     response = await fetch(`/api/containers/${server}`, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': 'Basic ' + btoa('admin:seaweedadmin')
-                        }
+                        method: 'POST'
+                        // Note: Authentication is handled by nginx proxy, no credentials needed in JavaScript
                     });
                 }
                 
@@ -1041,13 +1078,20 @@
             async fetchRealS3Operations() {
                 try {
                     // Fetch operations from the API server
+                    // Note: Authentication is handled by nginx proxy, no credentials needed in JavaScript
                     const response = await fetch('/s3-operations?since=' + encodeURIComponent(this.lastFetchedTimestamp || ''));
                     
                     if (!response.ok) {
                         throw new Error(`Failed to fetch S3 operations: ${response.status}`);
                     }
                     
-                    const operations = await response.json();
+                    const responseText = await response.text();
+                    // Extract JSON from malformed response
+                    const jsonMatch = responseText.match(/^\[.*\]/);
+                    let operations = [];
+                    if (jsonMatch) {
+                        operations = JSON.parse(jsonMatch[0]);
+                    }
                     
                     if (operations && operations.length > 0) {
                         // Update last timestamp
@@ -1242,6 +1286,7 @@
                 // If real operations are available, suggest switching
                 setTimeout(() => {
                     fetch('/filer/s3/logs')
+                        // Note: Authentication is handled by nginx proxy, no credentials needed in JavaScript
                         .then(response => {
                             if (response.ok) {
                                 const switchMsg = {
@@ -1280,6 +1325,163 @@
             setInterval(() => {
                 checkServerStatus();
             }, 10000); // Update every 10 seconds
+            
+            // S3 Object Management Functions
+            function showS3Result(result, isError = false) {
+                const resultDiv = document.getElementById('s3-result');
+                const resultContent = document.getElementById('s3-result-content');
+                
+                resultContent.textContent = JSON.stringify(result, null, 2);
+                resultDiv.style.display = 'block';
+                resultDiv.style.borderColor = isError ? '#dc3545' : '#28a745';
+                
+                // Scroll to result
+                resultDiv.scrollIntoView({ behavior: 'smooth' });
+            }
+            
+            function createS3Object() {
+                const bucketName = document.getElementById('bucket-name').value.trim();
+                const objectKey = document.getElementById('object-key').value.trim();
+                const sizeKb = document.getElementById('object-size').value;
+                
+                if (!bucketName || !objectKey) {
+                    showS3Result({ error: 'Bucket name and object key are required' }, true);
+                    return;
+                }
+                
+                fetch(`/api/s3/buckets/${bucketName}/objects/${objectKey}?size_kb=${sizeKb}`, {
+                    method: 'POST'
+                    // Note: Authentication is handled by nginx proxy, no credentials needed in JavaScript
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    return response.text();
+                })
+                .then(responseText => {
+                    // Extract JSON from malformed response
+                    const jsonMatch = responseText.match(/^\{.*\}/);
+                    let result = {};
+                    if (jsonMatch) {
+                        result = JSON.parse(jsonMatch[0]);
+                    }
+                    showS3Result(result, !result.success);
+                    
+                    // Log to S3 operations stream
+                    if (window.s3Stream) {
+                        window.s3Stream.processOperation({
+                            type: 'PUT',
+                            bucket: bucketName,
+                            object: objectKey,
+                            size: result.size || '0 bytes',
+                            statusCode: result.success ? 200 : 500,
+                            timestamp: new Date().toISOString(),
+                            message: result.message || 'Object created'
+                        });
+                    }
+                })
+                .catch(error => {
+                    showS3Result({ error: error.message }, true);
+                });
+            }
+            
+            function readS3Object() {
+                const bucketName = document.getElementById('bucket-name').value.trim();
+                const objectKey = document.getElementById('object-key').value.trim();
+                
+                if (!bucketName || !objectKey) {
+                    showS3Result({ error: 'Bucket name and object key are required' }, true);
+                    return;
+                }
+                
+                fetch(`/api/s3/buckets/${bucketName}/objects/${objectKey}`, {
+                    method: 'GET'
+                    // Note: Authentication is handled by nginx proxy, no credentials needed in JavaScript
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    return response.text();
+                })
+                .then(responseText => {
+                    // Extract JSON from malformed response
+                    const jsonMatch = responseText.match(/^\{.*\}/);
+                    let result = {};
+                    if (jsonMatch) {
+                        result = JSON.parse(jsonMatch[0]);
+                    }
+                    showS3Result(result, !result.success);
+                    
+                    // Log to S3 operations stream
+                    if (window.s3Stream) {
+                        window.s3Stream.processOperation({
+                            type: 'GET',
+                            bucket: bucketName,
+                            object: objectKey,
+                            size: result.size || '0 bytes',
+                            statusCode: result.success ? 200 : 404,
+                            timestamp: new Date().toISOString(),
+                            message: result.success ? 'Object read successfully' : result.error
+                        });
+                    }
+                })
+                .catch(error => {
+                    showS3Result({ error: error.message }, true);
+                });
+            }
+            
+            function deleteS3Object() {
+                const bucketName = document.getElementById('bucket-name').value.trim();
+                const objectKey = document.getElementById('object-key').value.trim();
+                
+                if (!bucketName || !objectKey) {
+                    showS3Result({ error: 'Bucket name and object key are required' }, true);
+                    return;
+                }
+                
+                fetch(`/api/s3/buckets/${bucketName}/objects/${objectKey}`, {
+                    method: 'DELETE'
+                    // Note: Authentication is handled by nginx proxy, no credentials needed in JavaScript
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    return response.text();
+                })
+                .then(responseText => {
+                    // Extract JSON from malformed response
+                    const jsonMatch = responseText.match(/^\{.*\}/);
+                    let result = {};
+                    if (jsonMatch) {
+                        result = JSON.parse(jsonMatch[0]);
+                    }
+                    showS3Result(result, !result.success);
+                    
+                    // Log to S3 operations stream
+                    if (window.s3Stream) {
+                        window.s3Stream.processOperation({
+                            type: 'DELETE',
+                            bucket: bucketName,
+                            object: objectKey,
+                            size: '0 bytes',
+                            statusCode: result.success ? 200 : 500,
+                            timestamp: new Date().toISOString(),
+                            message: result.message || 'Object deleted'
+                        });
+                    }
+                })
+                .catch(error => {
+                    showS3Result({ error: error.message }, true);
+                });
+            }
+            
+            // Add event listeners for S3 management buttons
+            document.getElementById('create-object-btn').addEventListener('click', createS3Object);
+            document.getElementById('read-object-btn').addEventListener('click', readS3Object);
+            document.getElementById('delete-object-btn').addEventListener('click', deleteS3Object);
             
             // Cleanup on page unload
             window.addEventListener('beforeunload', () => {

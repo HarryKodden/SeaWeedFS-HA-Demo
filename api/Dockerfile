@@ -7,6 +7,9 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Python dependencies
+RUN pip install boto3 requests
+
 # Set working directory
 WORKDIR /app
 

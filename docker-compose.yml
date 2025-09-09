@@ -178,6 +178,10 @@ services:
   # API server for cluster management
   api:
     build: api
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      SEAWEED_S3_URL: ${SEAWEED_S3_URL}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -187,9 +191,9 @@ services:
   nginx:
     build: proxy
     ports:
-      - "9080:80"    # Filer service
-      - "9333:9333"  # S3 API endpoint
-      - "9500:9500"  # Cluster endpoint
+      - "80:80"      # Dashboard and API
+      - "8080:8080"  # Filer server
+      - "8333:8333"  # S3 API endpoint
     volumes:
       - ./.htpasswd:/etc/nginx/.htpasswd
     networks:
@@ -214,35 +218,7 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-    labels:
-      - "traefik.enable=true"
-      # Main filer access
-      - "traefik.http.routers.seaweed-ha.rule=Host(`seaweed-ha.${DOMAIN}`)"
-      - "traefik.http.routers.seaweed-ha.tls=true"
-      - "traefik.http.routers.seaweed-ha.tls.certresolver=le"
-      - "traefik.http.routers.seaweed-ha.entrypoints=https"
-      - "traefik.http.routers.seaweed-ha.service=seaweed-ha"
-#     - "traefik.http.routers.seaweed-ha.middlewares=restricted@file"
-      - "traefik.http.services.seaweed-ha.loadbalancer.server.port=80"
-
-      # S3 API access
-      - "traefik.http.routers.seaweed-ha-s3.rule=Host(`seaweed-ha-s3.${DOMAIN}`)"
-      - "traefik.http.routers.seaweed-ha-s3.tls=true"
-      - "traefik.http.routers.seaweed-ha-s3.tls.certresolver=le"
-      - "traefik.http.routers.seaweed-ha-s3.entrypoints=https"
-      - "traefik.http.routers.seaweed-ha-s3.service=seaweed-ha-s3"
-#     - "traefik.http.routers.seaweed-ha-s3.middlewares=restricted@file"
-      - "traefik.http.services.seaweed-ha-s3.loadbalancer.server.port=9333"
-      
-      # Cluster access route (for master and volume access)
-      - "traefik.http.routers.seaweed-ha-cluster.rule=Host(`seaweed-ha-cluster.${DOMAIN}`)"
-      - "traefik.http.routers.seaweed-ha-cluster.tls=true"
-      - "traefik.http.routers.seaweed-ha-cluster.tls.certresolver=le"
-      - "traefik.http.routers.seaweed-ha-cluster.entrypoints=https"
-      - "traefik.http.routers.seaweed-ha-cluster.service=seaweed-ha-cluster"
-#     - "traefik.http.routers.seaweed-ha-cluster.middlewares=restricted@file"
-      - "traefik.http.services.seaweed-ha-cluster.loadbalancer.server.port=9500"
-
+        
 networks:
   external:
     name: external

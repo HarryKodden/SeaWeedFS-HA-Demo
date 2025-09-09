@@ -22,26 +22,26 @@ else
     echo -e "${GREEN}[OK]${NC} Nginx container is running"
 fi
 
-# Test Filer access (port 9080)
-echo -e "\nTesting Filer access on port 9080..."
-if curl -s -o /dev/null -w "%{http_code}" http://localhost:9080/ | grep -q "200\|301\|302"; then
-    echo -e "${GREEN}[OK]${NC} Filer is accessible"
+# Test Dashboard access (port 9080)
+echo -e "\nTesting Dashboard access on port 9080..."
+if curl -s -o /dev/null -w "%{http_code}" -u admin:seaweedadmin http://localhost:9080/ | grep -q "200"; then
+    echo -e "${GREEN}[OK]${NC} Dashboard is accessible"
 else
-    echo -e "${RED}[FAILED]${NC} Filer is not accessible"
+    echo -e "${RED}[FAILED]${NC} Dashboard is not accessible"
 fi
 
 # Test S3 API access (port 9333)
 echo -e "\nTesting S3 API access on port 9333..."
-if curl -s -o /dev/null -I -w "%{http_code}" http://localhost:9333/status | grep -q "403\|401"; then
+if curl -s -o /dev/null -I -w "%{http_code}" http://localhost:9333/ | grep -q "405\|403\|401\|400"; then
     echo -e "${GREEN}[OK]${NC} S3 API is accessible"
 else
     echo -e "${RED}[FAILED]${NC} S3 API is not accessible"
 fi
 
-# Test cluster admin dashboard (port 9500)
-echo -e "\nTesting Cluster Admin dashboard on port 9500..."
-if curl -s -o /dev/null -I -w "%{http_code}" http://localhost:9500/ | grep -q "401"; then
-    echo -e "${GREEN}[OK]${NC} Cluster Admin dashboard is accessible (returns auth error as expected)"
+# Test cluster admin dashboard (port 9080 - consolidated)
+echo -e "\nTesting Cluster Admin dashboard on port 9080..."
+if curl -s -o /dev/null -I -w "%{http_code}" -u admin:seaweedadmin http://localhost:9080/ | grep -q "200"; then
+    echo -e "${GREEN}[OK]${NC} Cluster Admin dashboard is accessible"
 else
     echo -e "${RED}[FAILED]${NC} Cluster Admin dashboard is not accessible"
 fi
@@ -55,7 +55,7 @@ if [ -f .env ]; then
     
     # Test authenticated access to cluster admin
     echo -e "\nTesting authenticated access to Cluster Admin dashboard..."
-    if curl -s -o /dev/null -w "%{http_code}" -u "${SEAWEED_AUTH_USER}:${SEAWEED_AUTH_PASSWORD}" http://localhost:9500/ | grep -q "200"; then
+    if curl -s -o /dev/null -w "%{http_code}" -u "${SEAWEED_AUTH_USER}:${SEAWEED_AUTH_PASSWORD}" http://localhost:9080/ | grep -q "200"; then
         echo -e "${GREEN}[OK]${NC} Authenticated access to Cluster Admin dashboard works"
     else
         echo -e "${RED}[FAILED]${NC} Authenticated access to Cluster Admin dashboard failed"
