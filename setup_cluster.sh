@@ -14,7 +14,8 @@
 #   1. Creates authentication credentials for the admin interface
 #   2. Generates S3 API credentials
 #   3. Creates a .env file with all configuration
-#   4. Starts the SeaweedFS HA cluster with 3 masters, 3 volumes, and 2 filers
+#   4. Builds the Docker images
+#   5. Starts the SeaweedFS HA cluster with 3 masters, 3 volumes, and 2 filers
 
 # Default values
 DEFAULT_USERNAME="admin"
@@ -31,6 +32,25 @@ PASSWORD=${2:-$DEFAULT_PASSWORD}
 DOMAIN=${3:-$DEFAULT_DOMAIN}
 
 echo "Setting up SeaweedFS HA cluster..."
+
+# Check if docker is available
+if ! command -v docker &> /dev/null; then
+    echo "docker not found. Please install Docker first."
+    exit 1
+fi
+
+# Check if docker compose is available
+if ! docker compose version &> /dev/null; then
+    echo "docker compose not found. Please install Docker Compose v2."
+    exit 1
+fi
+
+# Docker GID for API container socket access
+DOCKER_GID=$(getent group docker | cut -d: -f3)
+if [ -z "$DOCKER_GID" ]; then
+    echo "Warning: Could not determine docker group GID. Using default 999."
+    DOCKER_GID=999
+fi
 
 # Check if htpasswd utility is available
 if ! command -v htpasswd &> /dev/null; then
@@ -60,17 +80,14 @@ cat > .env << EOL
 # Domain configuration
 DOMAIN=${DOMAIN}
 
-# SeaweedFS URL endpoints
-SEAWEED_MASTER_URL=http://localhost:9500/master/1
-SEAWEED_VOLUME_URL=http://localhost:9500/volume/1
-SEAWEED_FILER_URL=http://localhost:9080
-SEAWEED_S3_URL=http://localhost:9333
+# Docker group ID for API container socket access
+DOCKER_GID=${DOCKER_GID}
 
-# Domain-based URLs (if using domain)
-#SEAWEED_MASTER_URL=https://seaweed-ha-cluster.${DOMAIN}/master/1
-#SEAWEED_VOLUME_URL=https://seaweed-ha-cluster.${DOMAIN}/volume/1
-#SEAWEED_FILER_URL=https://seaweed-ha.${DOMAIN}
-#SEAWEED_S3_URL=https://seaweed-ha-s3.${DOMAIN}
+# SeaweedFS URL endpoints (through nginx proxy)
+SEAWEED_MASTER_URL=http://localhost/master/1
+SEAWEED_VOLUME_URL=http://localhost/volume/1
+SEAWEED_FILER_URL=http://localhost:8080
+SEAWEED_S3_URL=http://localhost:9333
 
 # Authentication for admin access
 SEAWEED_AUTH_USER=${USERNAME}
@@ -81,9 +98,11 @@ AWS_ACCESS_KEY_ID=${RANDOM_ACCESS_KEY}
 AWS_SECRET_ACCESS_KEY=${RANDOM_SECRET_KEY}
 EOL
 
-# Check if docker compose is available (newer version without hyphen)
-if ! command -v docker &> /dev/null; then
-    echo "docker not found. Please install Docker first."
+# Build the Docker images
+echo "Building Docker images..."
+if ! docker compose build; then
+    echo "Error: Failed to build Docker images."
+    echo "Check the build output above for details."
     exit 1
 fi
 
@@ -97,28 +116,30 @@ fi
 
 echo "Waiting for services to start..."
 echo "This may take a moment as containers initialize..."
-sleep 10
+sleep 15
 
 # Check container status
+echo "Container Status:"
 docker compose ps
 
 echo "======================================================================================"
 echo "🌟 SeaweedFS HA cluster is now running! 🌟"
 echo "======================================================================================"
 echo ""
-echo "📂 Local Access (via port forwarding):"
+echo "📂 Local Access:"
 echo "--------------------------------------"
-echo "- Filer:  http://localhost:9080/"
-echo "- S3 API: http://localhost:9333/"
-echo "- Cluster Admin Dashboard (requires authentication): http://localhost:9334/"
-echo "- Master1 (requires authentication): http://localhost:9334/master/1/"
-echo "- Volume1 (requires authentication): http://localhost:9334/volume/1/"
+echo "- Dashboard:     http://localhost/"
+echo "- Master 1:      http://localhost/master/1/"
+echo "- Volume 1:      http://localhost/volume/1/"
+echo "- Filer 1:       http://localhost/filer/1/"
+echo "- API Docs:      http://localhost/api/docs"
 echo ""
-echo "🌐 Domain-based Access (when deployed with domain: $DOMAIN):"
+echo "🔗 Filer:"
+echo "- Filer:         http://localhost:8080/"
+echo ""
+echo "🔗 S3 API:"
 echo "--------------------------------------"
-echo "- Filer:  https://seaweed-ha.${DOMAIN}"
-echo "- S3 API: https://seaweed-ha-s3.${DOMAIN}"
-echo "- Cluster Admin: https://seaweed-ha-cluster.${DOMAIN}"
+echo "- S3 API:        http://localhost:9333/"
 echo ""
 echo "🔐 Admin Authentication:"
 echo "--------------------------------------"
@@ -133,6 +154,8 @@ echo ""
 echo "📝 Environment Configuration:"
 echo "--------------------------------------"
 echo "All configuration has been saved to .env file"
-echo "The Jupyter notebook will automatically use these settings"
+echo "Docker GID set to: $DOCKER_GID"
 echo ""
+echo "======================================================================================"
+echo "✅ Setup complete! Access the dashboard at: http://localhost/"
 echo "======================================================================================"

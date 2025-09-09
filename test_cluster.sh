@@ -14,12 +14,12 @@ echo
 
 # Check if the cluster is running
 echo -e "Checking if containers are running..."
-if [ "$(docker ps | grep demo-nginx-1 | wc -l)" -eq 0 ]; then
-    echo -e "${RED}[FAILED]${NC} Nginx container not running!"
+if [ "$(docker ps | grep proxy | wc -l)" -eq 0 ]; then
+    echo -e "${RED}[FAILED]${NC} proxy container not running!"
     echo -e "Run ${YELLOW}docker compose up -d${NC} to start the cluster"
     exit 1
 else
-    echo -e "${GREEN}[OK]${NC} Nginx container is running"
+    echo -e "${GREEN}[OK]${NC} proxy container is running"
 fi
 
 # Test Dashboard access (port 80)

@@ -7,7 +7,7 @@
 set -e
 
 # Configuration
-S3_ENDPOINT="http://localhost:9333"  # Load balancer endpoint
+S3_ENDPOINT="http://localhost:8333"  # Load balancer endpoint
 BUCKET_NAME="test-bucket"
 TEST_FILE="test-file.txt"
 TEST_CONTENT="Hello, SeaWeedFS S3!"

@@ -302,6 +302,48 @@
             border-top: 1px solid #eee;
             padding-top: 20px;
         }
+        
+        /* API Links Styles */
+        .api-links, .api-buttons {
+            margin-top: 30px;
+            padding: 15px;
+            background-color: #f1f8e9;
+            border: 1px solid #c8e6c9;
+            border-radius: 4px;
+        }
+        .api-links h3, .api-buttons h3 {
+            margin-top: 0;
+            color: #2e7d32;
+        }
+        .api-links ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        .api-links li {
+            margin-bottom: 10px;
+        }
+        .api-links a {
+            color: #2e7d32;
+            text-decoration: none;
+        }
+        .api-links a:hover {
+            text-decoration: underline;
+        }
+        .api-buttons {
+            display: flex;
+            gap: 10px;
+        }
+        .api-buttons button {
+            flex: 1;
+            padding: 10px;
+            font-size: 14px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .api-buttons button:hover {
+            opacity: 0.9;
+        }
     </style>
 </head>
 <body>
@@ -613,6 +655,11 @@
         </div>
     </div>
 
+    <div class="api-buttons">
+        <button onclick="window.open('/api/docs', '_blank')">Open API Docs</button>
+        <button onclick="window.open('/api/redoc', '_blank')">Open API Reference</button>
+    </div>
+
     <footer>
         <p>SeaweedFS High Availability Cluster Management - Version 3.96 - harry.kodden - at - SURF . nl</p>
     </footer>
@@ -641,47 +688,68 @@
         
         // Check server status and update UI
         async function checkServerStatus() {
-            // Set all to checking initially
             const servers = ['master1', 'master2', 'master3', 'volume1', 'volume2', 'volume3', 'filer1', 'filer2'];
             
             for (const server of servers) {
                 try {
                     // Check container status
-                    const response = await fetch(`/api/containers/${server}`);
-                    // Note: Authentication is handled by nginx proxy, no credentials needed in JavaScript
+                    console.log(`Checking status for ${server}...`);
+                    const response = await fetch(`/api/containers/${server}`, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json'
+                        }
+                    });
                     
                     if (response.ok) {
-                        const statusText = await response.text();
-                        // Extract the status from the response (handle malformed response with headers)
-                        const statusMatch = statusText.match(/^(running|stopped|not_found)/);
-                        const status = statusMatch ? statusMatch[1] : 'unknown';
+                        const data = await response.json();
+                        console.log(`Status response for ${server}:`, data);
+                        
+                        // Handle different response formats
+                        let status = 'unknown';
+                        if (typeof data === 'object' && data.status) {
+                            status = data.status;
+                        } else if (typeof data === 'string') {
+                            // Fallback for string responses
+                            status = data.toLowerCase().includes('running') ? 'running' : 
+                                    data.toLowerCase().includes('stopped') ? 'stopped' : 'unknown';
+                        }
+                        
                         serverStatus[server].isOnline = (status === 'running');
                         
-                        // Update master leadership status (simplified - in real implementation would check Raft status)
+                        // Update master leadership status
                         if (server.startsWith('master') && serverStatus[server].isOnline) {
-                            // For demo purposes, assume master1 is always leader when online
                             serverStatus[server].isLeader = (server === 'master1');
                         }
                     } else {
+                        console.error(`HTTP error for ${server} status: ${response.status}`);
                         serverStatus[server].isOnline = false;
                     }
                     
                     // Check health status
                     try {
-                        const healthResponse = await fetch(`/api/containers/${server}/health`);
-                        // Note: Authentication is handled by nginx proxy, no credentials needed in JavaScript
+                        console.log(`Checking health for ${server}...`);
+                        const healthResponse = await fetch(`/api/containers/${server}/health`, {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'application/json'
+                            }
+                        });
                         
                         if (healthResponse.ok) {
-                            const healthText = await healthResponse.text();
-                            // Extract JSON from malformed response
-                            const jsonMatch = healthText.match(/^\{.*\}/);
-                            if (jsonMatch) {
-                                const healthData = JSON.parse(jsonMatch[0]);
+                            const healthData = await healthResponse.json();
+                            console.log(`Health response for ${server}:`, healthData);
+                            
+                            // Handle different response formats
+                            if (typeof healthData === 'object' && healthData.status) {
                                 serverStatus[server].isHealthy = (healthData.status === 'healthy');
+                            } else if (typeof healthData === 'string') {
+                                serverStatus[server].isHealthy = healthData.toLowerCase().includes('healthy');
                             } else {
                                 serverStatus[server].isHealthy = false;
                             }
                         } else {
+                            console.error(`HTTP error for ${server} health: ${healthResponse.status}`);
                             serverStatus[server].isHealthy = false;
                         }
                     } catch (healthError) {
@@ -1079,7 +1147,7 @@
                 try {
                     // Fetch operations from the API server
                     // Note: Authentication is handled by nginx proxy, no credentials needed in JavaScript
-                    const response = await fetch('/s3-operations?since=' + encodeURIComponent(this.lastFetchedTimestamp || ''));
+                    const response = await fetch('/api/s3-operations?since=' + encodeURIComponent(this.lastFetchedTimestamp || ''));
                     
                     if (!response.ok) {
                         throw new Error(`Failed to fetch S3 operations: ${response.status}`);
@@ -1488,6 +1556,41 @@
                 s3Stream.destroy();
             });
         };
+        
+        // Add this function for debugging
+        async function debugAPIEndpoints() {
+            const servers = ['master1', 'master2', 'master3', 'volume1', 'volume2', 'volume3', 'filer1', 'filer2'];
+            
+            console.log('=== API Endpoint Debug ===');
+            
+            for (const server of servers) {
+                try {
+                    // Test status endpoint
+                    const statusResponse = await fetch(`/api/containers/${server}`);
+                    console.log(`${server} status: ${statusResponse.status} - ${statusResponse.statusText}`);
+                    
+                    if (statusResponse.ok) {
+                        const statusText = await statusResponse.text();
+                        console.log(`${server} status body:`, statusText);
+                    }
+                    
+                    // Test health endpoint
+                    const healthResponse = await fetch(`/api/containers/${server}/health`);
+                    console.log(`${server} health: ${healthResponse.status} - ${healthResponse.statusText}`);
+                    
+                    if (healthResponse.ok) {
+                        const healthText = await healthResponse.text();
+                        console.log(`${server} health body:`, healthText);
+                    }
+                    
+                } catch (error) {
+                    console.error(`${server} error:`, error);
+                }
+            }
+        }
+
+        // Call this in the console or add a debug button
+        // debugAPIEndpoints();
     </script>
 </body>
 </html>

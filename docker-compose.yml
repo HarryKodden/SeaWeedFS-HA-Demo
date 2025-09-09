@@ -2,9 +2,9 @@ services:
   # Multiple Master servers in a Raft cluster for high availability
   master1:
     image: chrislusf/seaweedfs
-    hostname: master1
-    ports:
-      - "19333:9333"
+    container_name: master1
+#   ports:
+#     - "19333:9333"
     networks:
       - internal
     command: "master -port=9333 -ip=master1 -mdir=/data -peers=master1:9333,master2:9333,master3:9333"
@@ -19,9 +19,9 @@ services:
 
   master2:
     image: chrislusf/seaweedfs
-    hostname: master2
-    ports:
-      - "29333:9333"
+    container_name: master2
+#   ports:
+#     - "29333:9333"
     networks:
       - internal
     command: "master -port=9333 -ip=master2 -mdir=/data -peers=master1:9333,master2:9333,master3:9333"
@@ -36,9 +36,9 @@ services:
 
   master3:
     image: chrislusf/seaweedfs
-    hostname: master3
-    ports:
-      - "39333:9333"
+    container_name: master3
+#   ports:
+#     - "39333:9333"
     networks:
       - internal
     command: "master -port=9333 -ip=master3 -mdir=/data -peers=master1:9333,master2:9333,master3:9333"
@@ -54,9 +54,9 @@ services:
   # Multiple Volume servers for data redundancy
   volume1:
     image: chrislusf/seaweedfs
-    hostname: volume1
-    ports:
-      - "18080:8080"
+    container_name: volume1
+#   ports:
+#     - "18080:8080"
     networks:
       - internal
     depends_on:
@@ -74,9 +74,9 @@ services:
 
   volume2:
     image: chrislusf/seaweedfs
-    hostname: volume2
-    ports:
-      - "28080:8080"
+    container_name: volume2
+#   ports:
+#     - "28080:8080"
     networks:
       - internal
     depends_on:
@@ -94,9 +94,9 @@ services:
 
   volume3:
     image: chrislusf/seaweedfs
-    hostname: volume3
-    ports:
-      - "38080:8080"
+    container_name: volume3
+#   ports:
+#     - "38080:8080"
     networks:
       - internal
     depends_on:
@@ -115,10 +115,10 @@ services:
   # Filer servers with redundancy
   filer1:
     image: chrislusf/seaweedfs
-    hostname: filer1
-    ports:
-      - "18888:8888"
-      - "18333:8333"
+    container_name: filer1
+#   ports:
+#     - "18888:8888"
+#     - "18333:8333"
     networks:
       - internal
     depends_on:
@@ -146,10 +146,10 @@ services:
 
   filer2:
     image: chrislusf/seaweedfs
-    hostname: filer2
-    ports:
-      - "28888:8888"
-      - "28333:8333"
+    container_name: filer2
+#   ports:
+#     - "28888:8888"
+#     - "28333:8333"
     networks:
       - internal
     depends_on:
@@ -177,7 +177,11 @@ services:
 
   # API server for cluster management
   api:
-    build: api
+    build:
+      context: api
+      args:
+        DOCKER_GID: ${DOCKER_GID}
+    container_name: api
     environment:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
@@ -186,10 +190,17 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://api:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   # Load balancer for filer service with template rendering
-  nginx:
+  proxy:
     build: proxy
+    container_name: proxy
     ports:
       - "80:80"      # Dashboard and API
       - "8080:8080"  # Filer server

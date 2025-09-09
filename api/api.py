@@ -1,1047 +1,579 @@
 #!/usr/bin/env python3
 
-import http.server
-import socketserver
-import subprocess
-import json
-import urllib.parse
-import urllib.request
-import requests
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.openapi.utils import get_openapi
+from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 from datetime import datetime, timezone
-import base64
-import time
+from typing import Optional, Dict, Any, List
+from pydantic import BaseModel, Field
+import docker
+import json
 import os
-import boto3
-from botocore.exceptions import ClientError
+from datetime import datetime, timezone
+from typing import Optional, Dict, Any
+import urllib.parse
+import secrets
 
-class ClusterAPIHandler(http.server.BaseHTTPRequestHandler):
+# Pydantic models for better Swagger documentation
+class ContainerStatus(BaseModel):
+    name: str = Field(..., description="Container name")
+    status: str = Field(..., description="Current container status (running, exited, etc.)")
+    container_id: str = Field(..., description="Short container ID")
+    image: str = Field(..., description="Docker image name and tag")
 
-    # healthcheck endpoint
-    def handle_health_check(self):
-        try:
-            health_response = {
-                "status": "healthy",
-                "service": "SeaweedFS Cluster API",
-                "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-            }
-            
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps(health_response).encode())
+class ContainerHealth(BaseModel):
+    container: str = Field(..., description="Container name")
+    status: str = Field(..., description="Health status (healthy, unhealthy, unknown)")
+    overall_status: str = Field(..., description="Overall container status")
 
-        except Exception as e:
-            self.send_error(500, f"Internal server error: {str(e)}")
+class S3Operation(BaseModel):
+    timestamp: str = Field(..., description="Operation timestamp in ISO format")
+    operation: str = Field(..., description="S3 operation type (GET, PUT, etc.)")
+    bucket: str = Field(..., description="S3 bucket name")
+    key: str = Field(..., description="S3 object key")
+    size: int = Field(..., description="Object size in bytes")
 
-    def do_GET(self):
-        parsed_path = urllib.parse.urlparse(self.path)
-        path_parts = parsed_path.path.strip('/').split('/')
+class HealthResponse(BaseModel):
+    status: str = Field(..., description="API health status")
+    timestamp: str = Field(..., description="Current timestamp")
+    service: str = Field(..., description="Service name")
 
-        if parsed_path.path == '/health':
-            self.handle_health_check()
-        elif parsed_path.path == '/api/docs/openapi.json':
-            self.serve_openapi_spec()
-        elif parsed_path.path == '/api/docs':
-            self.handle_api_docs()
-        elif parsed_path.path == '/s3-operations':
-            self.handle_s3_operations()
-        elif len(path_parts) >= 4 and path_parts[0] == 'api' and path_parts[1] == 'containers' and path_parts[3] == 'health':
-            container_name = path_parts[2]
-            self.handle_container_health(container_name)
-        elif len(path_parts) >= 3 and path_parts[0] == 'api' and path_parts[1] == 'containers':
-            container_name = path_parts[2]
-            self.handle_container_status(container_name)
-        elif len(path_parts) >= 3 and path_parts[0] == 'containers' and path_parts[2] == 'health':
-            container_name = path_parts[1]
-            self.handle_container_health(container_name)
-        elif len(path_parts) >= 2 and path_parts[0] == 'containers':
-            container_name = path_parts[1]
-            self.handle_container_status(container_name)
-        elif len(path_parts) >= 5 and path_parts[0] == 'api' and path_parts[1] == 's3' and path_parts[2] == 'buckets':
-            bucket_name = path_parts[3]
-            object_key = '/'.join(path_parts[5:])  # Handle object keys with slashes
-            self.handle_s3_object_read(bucket_name, object_key)
-        else:
-            self.send_error(404, "Endpoint not found")
+class ContainerList(BaseModel):
+    containers: List[ContainerStatus] = Field(..., description="List of containers")
 
-        if parsed_path.path == '/health':
-            self.handle_health_check()
-        elif parsed_path.path == '/api/docs/openapi.json':
-            self.serve_openapi_spec()
-        elif parsed_path.path == '/api/docs':
-            self.handle_api_docs()
-        elif parsed_path.path == '/s3-operations':
-            self.handle_s3_operations()
-        elif len(path_parts) >= 4 and path_parts[0] == 'api' and path_parts[1] == 'containers' and path_parts[3] == 'health':
-            container_name = path_parts[2]
-            self.handle_container_health(container_name)
-        elif len(path_parts) >= 3 and path_parts[0] == 'api' and path_parts[1] == 'containers':
-            container_name = path_parts[2]
-            self.handle_container_status(container_name)
-        elif len(path_parts) >= 3 and path_parts[0] == 'containers' and path_parts[2] == 'health':
-            container_name = path_parts[1]
-            self.handle_container_health(container_name)
-        elif len(path_parts) >= 2 and path_parts[0] == 'containers':
-            container_name = path_parts[1]
-            self.handle_container_status(container_name)
-        elif len(path_parts) >= 5 and path_parts[0] == 'api' and path_parts[1] == 's3' and path_parts[2] == 'buckets':
-            bucket_name = path_parts[3]
-            object_key = '/'.join(path_parts[5:])  # Handle object keys with slashes
-            self.handle_s3_object_read(bucket_name, object_key)
-        else:
-            self.send_error(404, "Endpoint not found")
+class S3OperationsResponse(BaseModel):
+    operations: List[S3Operation] = Field(..., description="List of S3 operations")
 
-    def do_POST(self):
-        parsed_path = urllib.parse.urlparse(self.path)
-        path_parts = parsed_path.path.strip('/').split('/')
+app = FastAPI(
+    title="SeaweedFS Cluster Management API",
+    description="""
+    # SeaweedFS Cluster Management API
 
-        if len(path_parts) >= 3 and path_parts[0] == 'api' and path_parts[1] == 'containers':
-            container_name = path_parts[2]
-            self.handle_container_start(container_name)
-        elif len(path_parts) >= 2 and path_parts[0] == 'containers':
-            container_name = path_parts[1]
-            self.handle_container_start(container_name)
-        elif len(path_parts) >= 5 and path_parts[0] == 'api' and path_parts[1] == 's3' and path_parts[2] == 'buckets':
-            bucket_name = path_parts[3]
-            object_key = '/'.join(path_parts[5:])  # Handle object keys with slashes
-            self.handle_s3_object_create(bucket_name, object_key)
-        else:
-            self.send_error(404, "Endpoint not found")
+    This comprehensive API provides full management capabilities for your SeaweedFS distributed file system cluster.
 
-    def do_DELETE(self):
-        parsed_path = urllib.parse.urlparse(self.path)
-        path_parts = parsed_path.path.strip('/').split('/')
+    ## 🚀 Features
 
-        if len(path_parts) >= 3 and path_parts[0] == 'api' and path_parts[1] == 'containers':
-            container_name = path_parts[2]
-            self.handle_container_stop(container_name)
-        elif len(path_parts) >= 2 and path_parts[0] == 'containers':
-            container_name = path_parts[1]
-            self.handle_container_stop(container_name)
-        elif len(path_parts) >= 5 and path_parts[0] == 'api' and path_parts[1] == 's3' and path_parts[2] == 'buckets':
-            bucket_name = path_parts[3]
-            object_key = '/'.join(path_parts[5:])  # Handle object keys with slashes
-            self.handle_s3_object_delete(bucket_name, object_key)
-        else:
-            self.send_error(404, "Endpoint not found")
+    * **Container Management**: Start, stop, and monitor SeaweedFS containers
+    * **Health Monitoring**: Real-time health checks for all cluster components
+    * **S3 Operations**: Mock S3 operation data for testing and monitoring
+    * **Interactive Documentation**: Full Swagger UI and ReDoc for testing endpoints
 
-    def handle_s3_operations(self):
-        try:
-            # Get query parameters
-            parsed_path = urllib.parse.urlparse(self.path)
-            query_params = urllib.parse.parse_qs(parsed_path.query)
-            since_timestamp = query_params.get('since', [None])[0]
+    ## 🔐 Authentication
 
-            # Get S3 operations using Python function
-            operations_json = get_s3_operations(since_timestamp)
+    All endpoints are protected by HTTP Basic Authentication through the nginx proxy.
+    Use the credentials configured in your setup (default: admin/seaweedadmin).
 
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(operations_json.encode())
+    ## 📚 Getting Started
 
-        except Exception as e:
-            self.send_error(500, f"Internal server error: {str(e)}")
+    1. Access the interactive documentation at `/docs`
+    2. Use the "Authorize" button to enter your credentials (if required)
+    3. Test any endpoint directly from the Swagger UI
+    4. All requests will be authenticated through the nginx proxy
 
-    def handle_container_status(self, container_name):
-        try:
-            status = get_container_status(container_name)
-            
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(status.encode())
+    ## 📋 API Endpoints Overview
 
-        except Exception as e:
-            self.send_error(500, f"Internal server error: {str(e)}")
+    ### Container Management
+    - `GET /api/health` - Service health check
+    - `GET /api/containers/{container_name}` - Get container status
+    - `GET /api/containers/{container_name}/health` - Get container health
+    - `POST /api/containers/{container_name}` - Start container
+    - `DELETE /api/containers/{container_name}` - Stop container
+    - `GET /api/containers` - List all containers
 
-    def handle_container_start(self, container_name):
-        try:
-            result = start_container(container_name)
-            
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(result.encode())
+    ### S3 Operations
+    - `GET /api/s3-operations` - Get S3 operations (mock data)
 
-        except Exception as e:
-            self.send_error(500, f"Internal server error: {str(e)}")
+    ## 🏷️ Tags
 
-    def handle_container_stop(self, container_name):
-        try:
-            result = stop_container(container_name)
-            
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(result.encode())
+    - **Health**: Health check and monitoring endpoints
+    - **Containers**: Container management operations
+    - **S3**: S3-related operations and data
 
-        except Exception as e:
-            self.send_error(500, f"Internal server error: {str(e)}")
+    ## 📞 Support
 
-    def handle_s3_object_create(self, bucket_name, object_key):
-        try:
-            # Get size parameter from query string
-            parsed_path = urllib.parse.urlparse(self.path)
-            query_params = urllib.parse.parse_qs(parsed_path.query)
-            size_kb = int(query_params.get('size_kb', [10])[0])
-            
-            result = create_bucket_object(bucket_name, object_key, size_kb)
-            
-            self.send_response(200 if result['success'] else 400)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps(result).encode())
+    For issues or questions, please check the SeaweedFS documentation or contact your system administrator.
+    """,
+    version="1.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+    contact={
+        "name": "SeaweedFS Cluster Admin",
+        "url": "https://github.com/chrislusf/seaweedfs",
+        "email": "admin@seaweedfs.local",
+    },
+    license_info={
+        "name": "Apache 2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0.html",
+    },
+    swagger_ui_parameters={
+        "persistAuthorization": True,
+        "displayRequestDuration": True,
+        "docExpansion": "none",
+        "filter": True,
+        "showExtensions": True,
+        "showCommonExtensions": True,
+        "tryItOutEnabled": True,
+        "syntaxHighlight.theme": "arta",
+        "defaultModelsExpandDepth": 1,
+        "defaultModelExpandDepth": 1,
+        "displayOperationId": False,
+        "displayRequestDuration": True,
+        "deepLinking": True,
+        "showMutatedRequest": True,
+    },
+    tags_metadata=[
+        {
+            "name": "Health",
+            "description": "Health check and monitoring endpoints",
+        },
+        {
+            "name": "Containers",
+            "description": "Container management operations",
+        },
+        {
+            "name": "S3",
+            "description": "S3-related operations and data",
+        },
+    ]
+)
 
-        except Exception as e:
-            self.send_error(500, f"Internal server error: {str(e)}")
+# CORS middleware - allow all for Swagger UI functionality
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    def handle_s3_object_read(self, bucket_name, object_key):
-        try:
-            result = read_bucket_object(bucket_name, object_key)
-            
-            self.send_response(200 if result['success'] else 404)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps(result).encode())
+# Security scheme for Swagger UI
+security = HTTPBasic()
 
-        except Exception as e:
-            self.send_error(500, f"Internal server error: {str(e)}")
+# Docker client dependency
+def get_docker_client():
+    try:
+        return docker.from_env()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Docker connection failed: {str(e)}")
 
-    def handle_s3_object_delete(self, bucket_name, object_key):
-        try:
-            result = delete_bucket_object(bucket_name, object_key)
-            
-            self.send_response(200 if result['success'] else 400)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps(result).encode())
+@app.get("/api/health", 
+         summary="Health Check", 
+         description="Returns the current health status of the API service",
+         response_model=HealthResponse,
+         tags=["Health"])
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "service": "SeaweedFS Cluster API"
+    }
 
-        except Exception as e:
-            self.send_error(500, f"Internal server error: {str(e)}")
+@app.get("/api/containers/{container_name}", 
+         summary="Get Container Status",
+         description="Retrieve the current status and information of a specific container",
+         response_model=ContainerStatus,
+         tags=["Containers"],
+         responses={
+             200: {
+                 "description": "Container status retrieved successfully",
+                 "content": {
+                     "application/json": {
+                         "example": {
+                             "name": "master1",
+                             "status": "running",
+                             "container_id": "abc12345",
+                             "image": "seaweedfs/master:latest"
+                         }
+                     }
+                 }
+             },
+             404: {
+                 "description": "Container not found",
+                 "content": {
+                     "application/json": {
+                         "example": {"detail": "Container 'master1' not found"}
+                     }
+                 }
+             }
+         })
+async def get_container_status(container_name: str, client: docker.DockerClient = Depends(get_docker_client)):
+    """
+    Get detailed status information for a container.
+    
+    - **container_name**: The name of the container to query (e.g., master1, volume1, filer1)
+    - Returns container status, ID, and image information
+    """
+    try:
+        if not container_name or container_name.strip() == "":
+            raise HTTPException(status_code=400, detail="Container name cannot be empty")
 
-    def handle_api_docs(self):
-        try:
-            # Check if this is a request for the OpenAPI spec
-            if self.path.endswith('/openapi.json'):
-                self.serve_openapi_spec()
-                return
-
-            # Serve Swagger UI
-            swagger_html = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>SeaweedFS Cluster API - Swagger UI</title>
-    <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.10.3/swagger-ui.css" />
-    <link rel="icon" type="image/png" href="https://unpkg.com/swagger-ui-dist@5.10.3/favicon-32x32.png" sizes="32x32" />
-    <style>
-        html {
-            box-sizing: border-box;
-            overflow: -moz-scrollbars-vertical;
-            overflow-y: scroll;
+        container = client.containers.get(container_name)
+        return {
+            "name": container.name,
+            "status": container.status,
+            "container_id": container.id[:12],
+            "image": container.image.tags[0] if container.image.tags else "unknown"
         }
-        *, *:before, *:after {
-            box-sizing: inherit;
+    except docker.errors.NotFound:
+        raise HTTPException(status_code=404, detail=f"Container '{container_name}' not found")
+    except docker.errors.APIError as e:
+        raise HTTPException(status_code=500, detail=f"Docker API error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+@app.get("/api/containers/{container_name}/health",
+         summary="Get Container Health",
+         description="Check the health status of a specific container using service-specific health checks",
+         response_model=ContainerHealth,
+         tags=["Containers"],
+         responses={
+             200: {
+                 "description": "Container health retrieved successfully",
+                 "content": {
+                     "application/json": {
+                         "example": {
+                             "container": "master1",
+                             "status": "healthy",
+                             "overall_status": "running"
+                         }
+                     }
+                 }
+             },
+             404: {
+                 "description": "Container not found",
+                 "content": {
+                     "application/json": {
+                         "example": {"detail": "Container 'master1' not found"}
+                     }
+                 }
+             }
+         })
+async def get_container_health(container_name: str, client: docker.DockerClient = Depends(get_docker_client)):
+    """
+    Get health status for a container.
+    
+    Performs health checks based on container type:
+    - **Filers**: Check HTTP endpoint on port 8888
+    - **Masters**: Check cluster status on port 9333  
+    - **Volumes**: Check status endpoint on port 8080
+    
+    - **container_name**: The name of the container to check
+    - Returns health status and overall container status
+    """
+    try:
+        if not container_name:
+            raise HTTPException(status_code=400, detail="Container name cannot be empty")
+        
+        container = client.containers.get(container_name)
+        health_status = "unknown"
+        
+        # Check health based on container type
+        container_type = get_container_type(container.name)
+
+        if container_type == 'filer':
+            # For filers, check HTTP endpoint
+            try:
+                import requests
+                response = requests.get(f"http://{container_name}:8888/", timeout=5)
+                health_status = "healthy" if response.status_code == 200 else "unhealthy"
+            except:
+                health_status = "unhealthy"
+        elif container_type == 'master':
+            # For masters, check cluster status
+            try:
+                import requests
+                response = requests.get(f"http://{container_name}:9333/cluster/status", timeout=5)
+                health_status = "healthy" if response.status_code == 200 else "unhealthy"
+            except:
+                health_status = "unhealthy"
+        elif container_type == 'volume':
+            # For volumes, check status endpoint
+            try:
+                import requests
+                response = requests.get(f"http://{container_name}:8080/status", timeout=5)
+                health_status = "healthy" if response.status_code == 200 else "unhealthy"
+            except:
+                health_status = "unhealthy"
+        
+        return {
+            "container": container_name,
+            "status": health_status,
+            "overall_status": container.status
         }
-        body {
-            margin:0;
-            background: #fafafa;
-        }
-    </style>
-</head>
-<body>
-    <div id="swagger-ui"></div>
-    <script src="https://unpkg.com/swagger-ui-dist@5.10.3/swagger-ui-bundle.js"></script>
-    <script src="https://unpkg.com/swagger-ui-dist@5.10.3/swagger-ui-standalone-preset.js"></script>
-    <script>
-    window.onload = function() {
-        const ui = SwaggerUIBundle({
-            url: '/api/docs/openapi.json',
-            dom_id: '#swagger-ui',
-            deepLinking: true,
-            presets: [
-                SwaggerUIBundle.presets.apis,
-                SwaggerUIStandalonePreset
-            ],
-            plugins: [
-                SwaggerUIBundle.plugins.DownloadUrl
-            ],
-            layout: "StandaloneLayout",
-            tryItOutEnabled: true,
-            requestInterceptor: (req) => {
-                // Add any custom headers if needed
-                return req;
-            },
-            responseInterceptor: (res) => {
-                return res;
-            }
-        });
-    };
-    </script>
-</body>
-</html>
-            """
+    except docker.errors.NotFound:
+        raise HTTPException(status_code=404, detail=f"Container '{container_name}' not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(swagger_html.encode())
+@app.post("/api/containers/{container_name}",
+          summary="Start Container", 
+          description="Start a stopped container in the cluster",
+          tags=["Containers"],
+          responses={
+              200: {
+                  "description": "Container started successfully",
+                  "content": {
+                      "application/json": {
+                          "example": {"message": "Container master1 started successfully"}
+                      }
+                  }
+              },
+              404: {
+                  "description": "Container not found",
+                  "content": {
+                      "application/json": {
+                          "example": {"detail": "Container 'master1' not found"}
+                      }
+                  }
+              }
+          })
+async def start_container(container_name: str, client: docker.DockerClient = Depends(get_docker_client)):
+    """
+    Start a container that is currently stopped.
+    
+    - **container_name**: The name of the container to start
+    - Returns success message if container starts successfully
+    """
+    try:
+        if not container_name:
+            raise HTTPException(status_code=400, detail="Container name cannot be empty")
+        
+        container = client.containers.get(container_name)
+        
+        # Check if container is already running
+        if container.status == "running":
+            return {"message": f"Container {container_name} is already running"}
+        
+        container.start()
+        return {"message": f"Container {container_name} started successfully"}
+    except docker.errors.NotFound:
+        raise HTTPException(status_code=404, detail=f"Container '{container_name}' not found")
+    except docker.errors.APIError as e:
+        # Handle specific Docker API errors
+        if "already in progress" in str(e).lower():
+            return {"message": f"Container {container_name} start already in progress"}
+        elif "not running" in str(e).lower():
+            return {"message": f"Container {container_name} is not running"}
+        else:
+            raise HTTPException(status_code=500, detail=f"Docker API error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
-        except Exception as e:
-            self.send_error(500, f"Internal server error: {str(e)}")
-
-    def serve_openapi_spec(self):
-        """Serve the OpenAPI 3.0 specification"""
-        try:
-            # Get the original host from the request
-            host = self.headers.get('Host', 'localhost:8080')
-            protocol = 'http'  # Assuming HTTP for this demo, could be enhanced to detect HTTPS
-
-            # Build dynamic server URLs
-            base_url = f"{protocol}://{host}"
-            api_base_url = f"{protocol}://{host.replace(':8080', ':9500')}/api"
-
-            openapi_spec = {
-                "openapi": "3.0.3",
-                "info": {
-                    "title": "SeaweedFS Cluster API",
-                    "description": "API for managing SeaweedFS cluster containers and monitoring operations",
-                    "version": "1.0.0",
-                    "contact": {
-                        "name": "SeaweedFS Cluster Admin",
-                        "email": "admin@seaweedfs.local"
-                    }
-                },
-                "servers": [
-                    {
-                        "url": base_url,
-                        "description": "Direct API server"
-                    },
-                    {
-                        "url": api_base_url,
-                        "description": "API through nginx proxy"
-                    }
-                ],
-                "paths": {
-                    "/health": {
-                        "get": {
-                            "summary": "Health check (GET)",
-                            "description": "Get detailed health status",
-                            "responses": {
-                                "200": {
-                                    "description": "Health status",
-                                    "content": {
-                                        "application/json": {
-                                            "schema": {
-                                                "$ref": "#/components/schemas/HealthResponse"
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "/containers/{containerName}": {
-                        "get": {
-                            "summary": "Get container status",
-                            "description": "Get the current status of a specific container",
-                            "parameters": [
-                                {
-                                    "name": "containerName",
-                                    "in": "path",
-                                    "required": True,
-                                    "description": "Name of the container",
-                                    "schema": {
-                                        "type": "string",
-                                        "enum": ["master1", "master2", "master3", "volume1", "volume2", "volume3", "filer1", "filer2", "nginx", "api"]
-                                    }
-                                }
-                            ],
-                            "responses": {
-                                "200": {
-                                    "description": "Container status",
-                                    "content": {
-                                        "text/plain": {
-                                            "schema": {
-                                                "type": "string",
-                                                "enum": ["running", "stopped", "not_found"]
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        "post": {
-                            "summary": "Start container",
-                            "description": "Start a specific container",
-                            "parameters": [
-                                {
-                                    "name": "containerName",
-                                    "in": "path",
-                                    "required": True,
-                                    "description": "Name of the container to start",
-                                    "schema": {
-                                        "type": "string",
-                                        "enum": ["master1", "master2", "master3", "volume1", "volume2", "volume3", "filer1", "filer2", "nginx", "api"]
-                                    }
-                                }
-                            ],
-                            "responses": {
-                                "200": {
-                                    "description": "Container start result",
-                                    "content": {
-                                        "text/plain": {
-                                            "schema": {
-                                                "type": "string",
-                                                "enum": ["started", "failed"]
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        "delete": {
-                            "summary": "Stop container",
-                            "description": "Stop a specific container",
-                            "parameters": [
-                                {
-                                    "name": "containerName",
-                                    "in": "path",
-                                    "required": True,
-                                    "description": "Name of the container to stop",
-                                    "schema": {
-                                        "type": "string",
-                                        "enum": ["master1", "master2", "master3", "volume1", "volume2", "volume3", "filer1", "filer2", "nginx", "api"]
-                                    }
-                                }
-                            ],
-                            "responses": {
-                                "200": {
-                                    "description": "Container stop result",
-                                    "content": {
-                                        "text/plain": {
-                                            "schema": {
-                                                "type": "string",
-                                                "enum": ["stopped", "failed"]
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "/containers/{containerName}/health": {
-                        "get": {
-                            "summary": "Get container health",
-                            "description": "Get detailed health status of a specific container",
-                            "parameters": [
-                                {
-                                    "name": "containerName",
-                                    "in": "path",
-                                    "required": True,
-                                    "description": "Name of the container",
-                                    "schema": {
-                                        "type": "string",
-                                        "enum": ["master1", "master2", "master3", "volume1", "volume2", "volume3", "filer1", "filer2", "nginx", "api"]
-                                    }
-                                }
-                            ],
-                            "responses": {
-                                "200": {
-                                    "description": "Container health status",
-                                    "content": {
-                                        "application/json": {
-                                            "schema": {
-                                                "$ref": "#/components/schemas/ContainerHealthResponse"
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "/s3-operations": {
-                        "get": {
-                            "summary": "Get S3 operations",
-                            "description": "Get recent S3 operations performed on the cluster",
-                            "parameters": [
-                                {
-                                    "name": "since",
-                                    "in": "query",
-                                    "required": False,
-                                    "description": "Get operations since this timestamp (ISO format)",
-                                    "schema": {
-                                        "type": "string",
-                                        "format": "date-time"
-                                    }
-                                }
-                            ],
-                            "responses": {
-                                "200": {
-                                    "description": "List of S3 operations",
-                                    "content": {
-                                        "application/json": {
-                                            "schema": {
-                                                "type": "array",
-                                                "items": {
-                                                    "$ref": "#/components/schemas/S3Operation"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "/api/containers/{containerName}": {
-                        "get": {
-                            "summary": "Get container status (API prefix)",
-                            "description": "Get the current status of a specific container using API prefix",
-                            "parameters": [
-                                {
-                                    "name": "containerName",
-                                    "in": "path",
-                                    "required": True,
-                                    "description": "Name of the container",
-                                    "schema": {
-                                        "type": "string",
-                                        "enum": ["master1", "master2", "master3", "volume1", "volume2", "volume3", "filer1", "filer2", "nginx", "api"]
-                                    }
-                                }
-                            ],
-                            "responses": {
-                                "200": {
-                                    "description": "Container status",
-                                    "content": {
-                                        "text/plain": {
-                                            "schema": {
-                                                "type": "string",
-                                                "enum": ["running", "stopped", "not_found"]
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        "post": {
-                            "summary": "Start container (API prefix)",
-                            "description": "Start a specific container using API prefix",
-                            "parameters": [
-                                {
-                                    "name": "containerName",
-                                    "in": "path",
-                                    "required": True,
-                                    "description": "Name of the container to start",
-                                    "schema": {
-                                        "type": "string",
-                                        "enum": ["master1", "master2", "master3", "volume1", "volume2", "volume3", "filer1", "filer2", "nginx", "api"]
-                                    }
-                                }
-                            ],
-                            "responses": {
-                                "200": {
-                                    "description": "Container start result",
-                                    "content": {
-                                        "text/plain": {
-                                            "schema": {
-                                                "type": "string",
-                                                "enum": ["started", "failed"]
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        "delete": {
-                            "summary": "Stop container (API prefix)",
-                            "description": "Stop a specific container using API prefix",
-                            "parameters": [
-                                {
-                                    "name": "containerName",
-                                    "in": "path",
-                                    "required": True,
-                                    "description": "Name of the container to stop",
-                                    "schema": {
-                                        "type": "string",
-                                        "enum": ["master1", "master2", "master3", "volume1", "volume2", "volume3", "filer1", "filer2", "nginx", "api"]
-                                    }
-                                }
-                            ],
-                            "responses": {
-                                "200": {
-                                    "description": "Container stop result",
-                                    "content": {
-                                        "text/plain": {
-                                            "schema": {
-                                                "type": "string",
-                                                "enum": ["stopped", "failed"]
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "/api/containers/{containerName}/health": {
-                        "get": {
-                            "summary": "Get container health (API prefix)",
-                            "description": "Get detailed health status of a specific container using API prefix",
-                            "parameters": [
-                                {
-                                    "name": "containerName",
-                                    "in": "path",
-                                    "required": True,
-                                    "description": "Name of the container",
-                                    "schema": {
-                                        "type": "string",
-                                        "enum": ["master1", "master2", "master3", "volume1", "volume2", "volume3", "filer1", "filer2", "nginx", "api"]
-                                    }
-                                }
-                            ],
-                            "responses": {
-                                "200": {
-                                    "description": "Container health status",
-                                    "content": {
-                                        "application/json": {
-                                            "schema": {
-                                                "$ref": "#/components/schemas/ContainerHealthResponse"
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+@app.delete("/api/containers/{container_name}",
+            summary="Stop Container",
+            description="Stop a running container in the cluster", 
+            tags=["Containers"],
+            responses={
+                200: {
+                    "description": "Container stopped successfully",
+                    "content": {
+                        "application/json": {
+                            "example": {"message": "Container master1 stopped successfully"}
                         }
                     }
                 },
-                "components": {
-                    "schemas": {
-                        "HealthResponse": {
-                            "type": "object",
-                            "properties": {
-                                "status": {
-                                    "type": "string",
-                                    "example": "healthy"
-                                },
-                                "service": {
-                                    "type": "string",
-                                    "example": "SeaweedFS Cluster API"
-                                },
-                                "timestamp": {
-                                    "type": "string",
-                                    "format": "date-time",
-                                    "example": "2025-09-08T10:30:00.000Z"
-                                }
-                            }
-                        },
-                        "ContainerHealthResponse": {
-                            "type": "object",
-                            "properties": {
-                                "status": {
-                                    "type": "string",
-                                    "enum": ["healthy", "unhealthy"],
-                                    "example": "healthy"
-                                },
-                                "container": {
-                                    "type": "string",
-                                    "example": "master1"
-                                }
-                            }
-                        },
-                        "S3Operation": {
-                            "type": "object",
-                            "properties": {
-                                "type": {
-                                    "type": "string",
-                                    "enum": ["GET", "PUT", "DELETE", "LIST"],
-                                    "example": "GET"
-                                },
-                                "bucket": {
-                                    "type": "string",
-                                    "example": "user-uploads"
-                                },
-                                "object": {
-                                    "type": "string",
-                                    "example": "photos/vacation-2024/img_001.jpg"
-                                },
-                                "size": {
-                                    "type": "string",
-                                    "example": "15432KB"
-                                },
-                                "statusCode": {
-                                    "type": "integer",
-                                    "example": 200
-                                },
-                                "timestamp": {
-                                    "type": "string",
-                                    "format": "date-time",
-                                    "example": "2025-09-08T10:30:00.000Z"
-                                }
-                            }
+                404: {
+                    "description": "Container not found",
+                    "content": {
+                        "application/json": {
+                            "example": {"detail": "Container 'master1' not found"}
                         }
                     }
                 }
+            })
+async def stop_container(container_name: str, client: docker.DockerClient = Depends(get_docker_client)):
+    """
+    Stop a container that is currently running.
+    
+    - **container_name**: The name of the container to stop
+    - Returns success message if container stops successfully
+    """
+    try:
+        if not container_name:
+            raise HTTPException(status_code=400, detail="Container name cannot be empty")
+
+        container = client.containers.get(container_name)
+        
+        # Check if container is already stopped
+        if container.status == "exited":
+            return {"message": f"Container {container_name} is already stopped"}
+        
+        container.stop(timeout=30)  # Add timeout to prevent hanging
+        return {"message": f"Container {container_name} stopped successfully"}
+    except docker.errors.NotFound:
+        raise HTTPException(status_code=404, detail=f"Container '{container_name}' not found")
+    except docker.errors.APIError as e:
+        # Handle specific Docker API errors
+        if "not running" in str(e).lower():
+            return {"message": f"Container {container_name} is not running"}
+        elif "already in progress" in str(e).lower():
+            return {"message": f"Container {container_name} stop already in progress"}
+        else:
+            raise HTTPException(status_code=500, detail=f"Docker API error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+@app.get("/api/s3-operations",
+         summary="Get S3 Operations",
+         description="Retrieve mock S3 operation data for monitoring and testing",
+         response_model=S3OperationsResponse,
+         tags=["S3"],
+         responses={
+             200: {
+                 "description": "S3 operations retrieved successfully",
+                 "content": {
+                     "application/json": {
+                         "example": {
+                             "operations": [
+                                 {
+                                     "timestamp": "2025-09-09T14:28:30.123456Z",
+                                     "operation": "PUT",
+                                     "bucket": "test-bucket",
+                                     "key": "test-file.txt",
+                                     "size": 1024
+                                 }
+                             ]
+                         }
+                     }
+                 }
+             }
+         })
+async def get_s3_operations(since: Optional[str] = None):
+    """
+    Get mock S3 operations data.
+    
+    Returns a list of simulated S3 operations for testing and monitoring purposes.
+    
+    - **since**: Optional timestamp filter (not implemented in mock)
+    - Returns list of operation records with timestamps, operations, and metadata
+    """
+    try:
+        # Mock S3 operations data
+        operations = [
+            {
+                "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
+                "operation": "PUT",
+                "bucket": "test-bucket",
+                "key": "test-file.txt",
+                "size": 1024
+            },
+            {
+                "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
+                "operation": "GET",
+                "bucket": "test-bucket", 
+                "key": "test-file.txt",
+                "size": 1024
             }
-
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps(openapi_spec).encode())
-
-        except Exception as e:
-            self.send_error(500, f"Internal server error: {str(e)}")
-
-    def handle_container_health(self, container_name):
-        try:
-            health_status = check_container_health(container_name)
-            
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(f'{{"status": "{health_status}", "container": "{container_name}"}}'.encode())
-
-        except Exception as e:
-            self.send_error(500, f"Internal server error: {str(e)}")
-
-
-# Helper functions for container management
-def get_full_container_name(short_name):
-    """Map short names to full Docker container names"""
-    name_map = {
-        'master1': 'seaweedfs-ha-demo-master1-1',
-        'master2': 'seaweedfs-ha-demo-master2-1',
-        'master3': 'seaweedfs-ha-demo-master3-1',
-        'volume1': 'seaweedfs-ha-demo-volume1-1',
-        'volume2': 'seaweedfs-ha-demo-volume2-1',
-        'volume3': 'seaweedfs-ha-demo-volume3-1',
-        'filer1': 'seaweedfs-ha-demo-filer1-1',
-        'filer2': 'seaweedfs-ha-demo-filer2-1',
-    }
-    return name_map.get(short_name, short_name)
-
-
-def get_container_status(short_name):
-    """Get container status using Docker API"""
-    container_name = get_full_container_name(short_name)
-    
-    try:
-        # Use Docker socket to check container status
-        req = urllib.request.Request(
-            f"http://localhost/containers/{container_name}/json",
-            method='GET'
-        )
+        ]
         
-        # For Docker socket, we need to use a Unix socket connection
-        # Since urllib doesn't support Unix sockets directly, we'll use curl via subprocess
-        result = subprocess.run(
-            ['curl', '-s', '--unix-socket', '/var/run/docker.sock', 
-             f'http://localhost/containers/{container_name}/json'],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        
-        if result.returncode == 0 and result.stdout.strip():
-            response_data = json.loads(result.stdout)
-            if response_data.get('State', {}).get('Running', False):
-                return 'running'
-            else:
-                return 'stopped'
-        else:
-            return 'not_found'
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
-        return 'not_found'
+        return {"operations": operations}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-
-def start_container(short_name):
-    """Start container using Docker API"""
-    container_name = get_full_container_name(short_name)
+@app.get("/api/containers",
+         summary="List All Containers",
+         description="List all containers in the cluster with their status information",
+         response_model=ContainerList,
+         tags=["Containers"],
+         responses={
+             200: {
+                 "description": "Containers listed successfully",
+                 "content": {
+                     "application/json": {
+                         "example": {
+                             "containers": [
+                                 {
+                                     "name": "master1",
+                                     "status": "running",
+                                     "container_id": "abc12345",
+                                     "image": "seaweedfs/master:latest"
+                                 }
+                             ]
+                         }
+                     }
+                 }
+             }
+         })
+async def list_containers(client: docker.DockerClient = Depends(get_docker_client)):
+    """
+    List all containers in the SeaweedFS cluster.
     
-    try:
-        result = subprocess.run(
-            ['curl', '-s', '-X', 'POST', '--unix-socket', '/var/run/docker.sock',
-             f'http://localhost/containers/{container_name}/start'],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        if result.returncode == 0:
-            return 'started'
-        else:
-            return 'failed'
-    except subprocess.TimeoutExpired:
-        return 'failed'
-
-
-def stop_container(short_name):
-    """Stop container using Docker API"""
-    container_name = get_full_container_name(short_name)
+    Returns information about all master, volume, and filer containers including:
+    - Container name
+    - Current status
+    - Docker image
     
+    Only shows containers related to SeaweedFS (containing 'master', 'volume', or 'filer' in name).
+    """
     try:
-        result = subprocess.run(
-            ['curl', '-s', '-X', 'POST', '--unix-socket', '/var/run/docker.sock',
-             f'http://localhost/containers/{container_name}/stop'],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        if result.returncode == 0:
-            return 'stopped'
-        else:
-            return 'failed'
-    except subprocess.TimeoutExpired:
-        return 'failed'
+        containers = client.containers.list(all=True)
+        return {
+            "containers": [
+                {
+                    "name": container.name,
+                    "status": container.status,
+                    "container_id": container.id[:12],  # Fixed: Added missing container_id field
+                    "image": container.image.tags[0] if container.image.tags else "unknown"
+                }
+                for container in containers
+                if any(keyword in container.name.lower() for keyword in ['master', 'volume', 'filer'])
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
+def get_container_type(container_name: str) -> str:
+    """Determine container type from name"""
+    if 'filer' in container_name.lower():
+        return 'filer'
+    elif 'master' in container_name.lower():
+        return 'master'
+    elif 'volume' in container_name.lower():
+        return 'volume'
+    return 'unknown'
 
-def check_container_health(short_name):
-    """Check container health based on service type"""
-    # First check if container is running
-    status = get_container_status(short_name)
-    if status != 'running':
-        return 'unhealthy'
+def get_health_check_url(container_name: str) -> str:
+    """Generate health check URL based on container type"""
+    container_type = get_container_type(container_name)
     
-    # Check health based on service type
-    try:
-        if short_name.startswith('master'):
-            # Check master health via cluster status endpoint
-            req = urllib.request.Request(f"http://{short_name}:9333/cluster/status")
-            with urllib.request.urlopen(req, timeout=5) as response:
-                return 'healthy'
-        elif short_name.startswith('volume'):
-            # Check volume health via status endpoint
-            req = urllib.request.Request(f"http://{short_name}:8080/status")
-            with urllib.request.urlopen(req, timeout=5) as response:
-                return 'healthy'
-        elif short_name.startswith('filer'):
-            # Check filer health via root endpoint
-            req = urllib.request.Request(f"http://{short_name}:8888/")
-            with urllib.request.urlopen(req, timeout=5) as response:
-                return 'healthy'
-        else:
-            return 'unhealthy'
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError):
-        return 'unhealthy'
+    if container_type == 'filer':
+        return f"http://{container_name}:8888/"
+    elif container_type == 'master':
+        return f"http://{container_name}:9333/cluster/status"
+    elif container_type == 'volume':
+        return f"http://{container_name}:8080/status"
+    else:
+        return None
 
-
-def get_s3_client():
-    """Create and return S3 client using environment variables"""
-    return boto3.client(
-        's3',
-        endpoint_url=os.getenv('SEAWEED_S3_URL', 'http://localhost:9333'),
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
-        region_name='us-east-1'  # SeaweedFS doesn't use regions, but boto3 requires it
+# Custom OpenAPI schema with enhanced metadata
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+        contact=app.contact,
+        license_info=app.license_info,
     )
-
-
-def generate_lorem_ipsum(size_kb=10):
-    """Generate lorem ipsum text of approximately the specified size in KB"""
-    lorem_base = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
-    
-    # Calculate how many times to repeat to reach approximately size_kb
-    base_size = len(lorem_base.encode('utf-8'))
-    repetitions = max(1, (size_kb * 1024) // base_size)
-    
-    content = (lorem_base + " ") * repetitions
-    return content[:size_kb * 1024]  # Trim to exact size
-
-
-def create_bucket_object(bucket_name, object_key, size_kb=10):
-    """Create a new object in the specified bucket with lorem ipsum content"""
-    try:
-        base_url = get_s3_base_url()
-        
-        # Generate lorem ipsum content
-        content = generate_lorem_ipsum(size_kb)
-        
-        # Create bucket first (PUT request to bucket URL)
-        bucket_url = f"{base_url}/{bucket_name}"
-        requests.put(bucket_url)
-        
-        # Put object
-        object_url = f"{bucket_url}/{object_key}"
-        response = requests.put(object_url, data=content)
-        
-        if response.status_code in [200, 201]:
-            return {
-                "success": True,
-                "message": f"Object '{object_key}' created in bucket '{bucket_name}'",
-                "size": f"{len(content)} bytes"
-            }
-        else:
-            return {
-                "success": False,
-                "message": f"Failed to create object: HTTP {response.status_code}",
-                "size": "0 bytes"
-            }
-        
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"Failed to create object: {str(e)}",
-            "size": "0 bytes"
+    # Add custom server information
+    openapi_schema["servers"] = [
+        {
+            "url": "http://192.168.80.115",
+            "description": "Production server"
         }
+    ]
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
 
+app.openapi = custom_openapi
 
-def read_bucket_object(bucket_name, object_key):
-    """Read an object from the specified bucket"""
-    try:
-        base_url = get_s3_base_url()
-        
-        object_url = f"{base_url}/{bucket_name}/{object_key}"
-        response = requests.get(object_url)
-        
-        if response.status_code == 200:
-            content = response.text
-            return {
-                "success": True,
-                "content": content[:500] + "..." if len(content) > 500 else content,
-                "size": f"{len(content)} bytes",
-                "last_modified": response.headers.get('Last-Modified', 'Unknown')
-            }
-        else:
-            return {
-                "success": False,
-                "content": "",
-                "size": "0 bytes",
-                "error": f"HTTP {response.status_code}: {response.text}"
-            }
-        
-    except Exception as e:
-        return {
-            "success": False,
-            "content": "",
-            "size": "0 bytes",
-            "error": str(e)
-        }
-
-
-def delete_bucket_object(bucket_name, object_key):
-    """Delete an object from the specified bucket"""
-    try:
-        base_url = get_s3_base_url()
-        
-        object_url = f"{base_url}/{bucket_name}/{object_key}"
-        response = requests.delete(object_url)
-        
-        if response.status_code in [200, 204]:
-            return {
-                "success": True,
-                "message": f"Object '{object_key}' deleted from bucket '{bucket_name}'"
-            }
-        else:
-            return {
-                "success": False,
-                "message": f"Failed to delete object: HTTP {response.status_code}"
-            }
-        
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"Failed to delete object: {str(e)}"
-        }
-
-
-def get_s3_client():
-    """Create and return S3 client using environment variables"""
-    return boto3.client(
-        's3',
-        endpoint_url=os.getenv('SEAWEED_S3_URL', 'http://nginx:9333'),
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
-        region_name='us-east-1'  # SeaweedFS doesn't use regions, but boto3 requires it
-    )
-
-
-def get_s3_base_url():
-    """Get the base S3 URL for direct HTTP requests"""
-    return os.getenv('SEAWEED_S3_URL', 'http://nginx:9333')
-
-
-def get_s3_auth():
-    """Get S3 authentication tuple"""
-    return (os.getenv('AWS_ACCESS_KEY_ID'), os.getenv('AWS_SECRET_ACCESS_KEY'))
-
-
-def get_s3_operations(since_timestamp=None):
-    """Get actual S3 operations from SeaweedFS S3 API"""
-    try:
-        s3_client = get_s3_client()
-        
-        # List all buckets
-        buckets = s3_client.list_buckets()
-        operations = []
-        
-        for bucket in buckets['Buckets']:
-            bucket_name = bucket['Name']
-            
-            try:
-                # List objects in each bucket
-                objects = s3_client.list_objects_v2(Bucket=bucket_name)
-                
-                if 'Contents' in objects:
-                    for obj in objects['Contents']:
-                        operations.append({
-                            "type": "LIST",
-                            "bucket": bucket_name,
-                            "object": obj['Key'],
-                            "size": f"{obj['Size']} bytes",
-                            "statusCode": 200,
-                            "timestamp": obj['LastModified'].strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-                        })
-                        
-            except ClientError as e:
-                # Bucket might be empty or inaccessible
-                operations.append({
-                    "type": "LIST",
-                    "bucket": bucket_name,
-                    "object": "",
-                    "size": "",
-                    "statusCode": 404 if e.response['Error']['Code'] == 'NoSuchBucket' else 500,
-                    "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-                })
-        
-        # If no buckets exist, return empty list
-        if not operations:
-            operations = [{
-                "type": "INFO",
-                "bucket": "",
-                "object": "",
-                "size": "",
-                "statusCode": 200,
-                "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-            }]
-            
-        return json.dumps(operations)
-        
-    except Exception as e:
-        # Return error information
-        error_op = [{
-            "type": "ERROR",
-            "bucket": "",
-            "object": "",
-            "size": "",
-            "statusCode": 500,
-            "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-        }]
-        return json.dumps(error_op)
-
-
-if __name__ == '__main__':
-    PORT = 8080
-    httpd = socketserver.TCPServer(("", PORT), ClusterAPIHandler)
-    print("Cluster API server running on port %d" % PORT)
-    httpd.serve_forever()
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080)
