@@ -157,6 +157,7 @@ echo "Creating S3 config file for SeaWeedFS"
 cat > s3.toml << EOL
 # SeaWeedFS S3 Configuration
 # Generated on $(date)
+# Includes default CORS configuration for all buckets
 
 [s3]
 access_key = "${AWS_ACCESS_KEY_ID}"
@@ -164,9 +165,17 @@ secret_key = "${AWS_SECRET_ACCESS_KEY}"
 region = "${AWS_REGION}"
 signature_version = "${AWS_S3_SIGNATURE_VERSION}"
 addressing_style = "${AWS_S3_ADDRESSING_STYLE}"
+
+# Default CORS configuration for all buckets
+[s3.cors]
+allow_origins = ["*"]
+allow_methods = ["GET", "PUT", "POST", "DELETE", "HEAD"]
+allow_headers = ["*"]
+expose_headers = ["ETag", "Content-Length", "Content-Type", "Content-Disposition"]
+max_age = 3000
 EOL
 
-echo "✓ Created s3_config.toml file"
+echo "✓ Created s3.toml file with default CORS configuration"
 
 # Build the Docker images
 echo "Building Docker images..."

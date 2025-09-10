@@ -38,9 +38,9 @@ else
     echo -e "${RED}[FAILED]${NC} S3 API is not accessible"
 fi
 
-# Test Filer access (port 8080)
-echo -e "\nTesting Filer access on port 8080..."
-if curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ | grep -q "200"; then
+# Test Filer access (port 8888)
+echo -e "\nTesting Filer access on port 8888..."
+if curl -s -o /dev/null -w "%{http_code}" http://localhost:8888/ | grep -q "200"; then
     echo -e "${GREEN}[OK]${NC} Filer is accessible"
 else
     echo -e "${RED}[FAILED]${NC} Filer is not accessible"

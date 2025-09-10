@@ -20,6 +20,42 @@ import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 import requests
 
+def apply_cors_to_bucket(bucket_name: str):
+    """Apply CORS configuration to a bucket using direct filer API access"""
+    try:
+        filer_url = os.getenv('SEAWEED_FILER_URL', 'http://filer:8888')
+        
+        # Default CORS configuration
+        default_cors = {
+            "CORSRules": [
+                {
+                    "AllowedHeaders": ["*"],
+                    "AllowedMethods": ["GET", "PUT", "POST", "DELETE", "HEAD"],
+                    "AllowedOrigins": ["*"],
+                    "ExposeHeaders": ["ETag", "Content-Length", "Content-Type", "Content-Disposition"],
+                    "MaxAgeSeconds": 3000
+                }
+            ]
+        }
+        
+        # Create the buckets directory if it doesn't exist
+        buckets_dir = f"{filer_url}/buckets/"
+        requests.put(buckets_dir, json={"directory": "buckets"}, headers={"Content-Type": "application/json"})
+        
+        # Create the bucket directory if it doesn't exist
+        bucket_dir = f"{filer_url}/buckets/{bucket_name}/"
+        requests.put(bucket_dir, json={"directory": bucket_name}, headers={"Content-Type": "application/json"})
+        
+        # Upload the CORS configuration to the bucket
+        cors_path = f"{filer_url}/buckets/{bucket_name}/.cors"
+        requests.put(cors_path, json=default_cors, headers={"Content-Type": "application/json"})
+        
+        return True
+    except Exception as e:
+        # Log error but don't fail the bucket creation
+        print(f"Warning: Failed to apply CORS to bucket {bucket_name}: {str(e)}")
+        return False
+
 # Pydantic models for better Swagger documentation
 class ContainerStatus(BaseModel):
     name: str = Field(..., description="Container name")
@@ -670,7 +706,14 @@ async def create_s3_bucket(bucket_name: str, s3_client = Depends(get_s3_client))
     """
     try:
         s3_client.create_bucket(Bucket=bucket_name)
-        return {"message": f"Bucket '{bucket_name}' created successfully"}
+        
+        # Apply CORS configuration after creating the bucket
+        cors_applied = apply_cors_to_bucket(bucket_name)
+        
+        if cors_applied:
+            return {"message": f"Bucket '{bucket_name}' created successfully with CORS configuration"}
+        else:
+            return {"message": f"Bucket '{bucket_name}' created successfully, but CORS configuration could not be applied"}
     except ClientError as e:
         error_code = e.response['Error']['Code']
         if error_code in ['BucketAlreadyExists', 'BucketAlreadyOwnedByYou']:
@@ -840,47 +883,54 @@ async def create_s3_object(bucket_name: str, object_key: str, content: str = "",
     - **size_kb**: Size of the object in KB (for mock content generation)
     - Returns success message with object details
     """
+    # Generate mock content if not provided
+    if not content:
+        content = "x" * (size_kb * 1024)  # Generate content of specified size
+    
+    # First, ensure the bucket exists (create it if it doesn't)
+    bucket_created = False
     try:
-        # Generate mock content if not provided
-        if not content:
-            content = "x" * (size_kb * 1024)  # Generate content of specified size
+        s3_client.create_bucket(Bucket=bucket_name)
         
+        # Apply CORS configuration for the newly created bucket
+        apply_cors_to_bucket(bucket_name)
+        bucket_created = True
+    except ClientError as e:
+        # Ignore BucketAlreadyExists error, as that's expected in many cases
+        if e.response['Error']['Code'] not in ['BucketAlreadyExists', 'BucketAlreadyOwnedByYou']:
+            # If it's a different error, raise it
+            if e.response['Error']['Code'] in ['EndpointConnectionError', 'NetworkError', 'ConnectionError']:
+                raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+            else:
+                raise HTTPException(status_code=500, detail=f"Failed to create bucket '{bucket_name}': {e.response['Error']['Message']}")
+    
+    # Now proceed with object creation
+    try:
         s3_client.put_object(
             Bucket=bucket_name,
             Key=object_key,
             Body=content.encode('utf-8')
         )
         
-        return {
-            "message": f"Object '{object_key}' created successfully",
-            "bucket": bucket_name,
-            "key": object_key,
-            "size": len(content)
-        }
+        if bucket_created:
+            return {
+                "success": True,
+                "message": f"Bucket '{bucket_name}' created and object '{object_key}' uploaded successfully",
+                "bucket": bucket_name,
+                "key": object_key,
+                "size": len(content)
+            }
+        else:
+            return {
+                "success": True,
+                "message": f"Object '{object_key}' created successfully",
+                "bucket": bucket_name,
+                "key": object_key,
+                "size": len(content)
+            }
     except ClientError as e:
         error_code = e.response['Error']['Code']
-        if error_code == 'NoSuchBucket':
-            # Auto-create bucket if it doesn't exist
-            try:
-                s3_client.create_bucket(Bucket=bucket_name)
-                # Retry put_object
-                s3_client.put_object(
-                    Bucket=bucket_name,
-                    Key=object_key,
-                    Body=content.encode('utf-8')
-                )
-                return {
-                    "message": f"Bucket '{bucket_name}' created and object '{object_key}' uploaded successfully",
-                    "bucket": bucket_name,
-                    "key": object_key,
-                    "size": len(content)
-                }
-            except ClientError as create_e:
-                if create_e.response['Error']['Code'] in ['BucketAlreadyExists', 'BucketAlreadyOwnedByYou']:
-                    raise HTTPException(status_code=500, detail=f"Bucket '{bucket_name}' exists but object upload failed: {create_e.response['Error']['Message']}")
-                else:
-                    raise HTTPException(status_code=500, detail=f"Failed to create bucket '{bucket_name}': {create_e.response['Error']['Message']}")
-        elif error_code in ['EndpointConnectionError', 'NetworkError', 'ConnectionError']:
+        if error_code in ['EndpointConnectionError', 'NetworkError', 'ConnectionError']:
             raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
         else:
             raise HTTPException(status_code=500, detail=f"S3 error: {error_code} - {e.response['Error']['Message']}")
@@ -933,6 +983,7 @@ async def get_s3_object(bucket_name: str, object_key: str, s3_client = Depends(g
         content = response['Body'].read().decode('utf-8')
         
         return {
+            "success": True,
             "bucket": bucket_name,
             "key": object_key,
             "size": response.get('ContentLength', 0),
@@ -994,6 +1045,7 @@ async def delete_s3_object(bucket_name: str, object_key: str, s3_client = Depend
         s3_client.delete_object(Bucket=bucket_name, Key=object_key)
         
         return {
+            "success": True,
             "message": f"Object '{object_key}' deleted successfully",
             "bucket": bucket_name,
             "key": object_key

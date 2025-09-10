@@ -1492,12 +1492,14 @@
                     
                     // Log to S3 operations stream
                     if (window.s3Stream) {
+                        // Check for success - if message exists or if there's no error, consider it successful
+                        const isSuccess = result.message && !result.error;
                         window.s3Stream.processOperation({
                             type: 'PUT',
                             bucket: bucketName,
                             object: objectKey,
                             size: result.size || '0 bytes',
-                            statusCode: result.success ? 200 : 500,
+                            statusCode: isSuccess ? 200 : 500,
                             timestamp: new Date().toISOString(),
                             message: result.message || 'Object created'
                         });
@@ -1534,7 +1536,9 @@
                     if (jsonMatch) {
                         result = JSON.parse(jsonMatch[0]);
                     }
-                    showS3Result(result, !result.success);
+                    // Check for success - if there's content or no error, consider it successful
+                    const isSuccess = (result.content !== undefined || result.size) && !result.error;
+                    showS3Result(result, !isSuccess);
                     
                     // Log to S3 operations stream
                     if (window.s3Stream) {
@@ -1543,9 +1547,9 @@
                             bucket: bucketName,
                             object: objectKey,
                             size: result.size || '0 bytes',
-                            statusCode: result.success ? 200 : 404,
+                            statusCode: isSuccess ? 200 : 404,
                             timestamp: new Date().toISOString(),
-                            message: result.success ? 'Object read successfully' : result.error
+                            message: isSuccess ? 'Object read successfully' : result.error
                         });
                     }
                 })
@@ -1580,7 +1584,9 @@
                     if (jsonMatch) {
                         result = JSON.parse(jsonMatch[0]);
                     }
-                    showS3Result(result, !result.success);
+                    // Check for success - if message exists and no error, consider it successful
+                    const isSuccess = result.message && !result.error;
+                    showS3Result(result, !isSuccess);
                     
                     // Log to S3 operations stream
                     if (window.s3Stream) {
@@ -1589,7 +1595,7 @@
                             bucket: bucketName,
                             object: objectKey,
                             size: '0 bytes',
-                            statusCode: result.success ? 200 : 500,
+                            statusCode: isSuccess ? 200 : 500,
                             timestamp: new Date().toISOString(),
                             message: result.message || 'Object deleted'
                         });
