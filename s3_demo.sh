@@ -51,17 +51,18 @@ configure_aws_cli() {
     # Configure the profile
     aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID" --profile "$AWS_PROFILE"
     aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile "$AWS_PROFILE"
-    aws configure set region "us-east-1" --profile "$AWS_PROFILE"
+    aws configure set region "$AWS_DEFAULT_REGION" --profile "$AWS_PROFILE"
     aws configure set output "json" --profile "$AWS_PROFILE"
     
     # Set S3 signature version to S3v4 for SeaWeedFS compatibility
-    aws configure set s3.signature_version s3v4 --profile "$AWS_PROFILE"
-    aws configure set s3.addressing_style path --profile "$AWS_PROFILE"
+    aws configure set s3.signature_version "$AWS_S3_SIGNATURE_VERSION" --profile "$AWS_PROFILE"
+    aws configure set s3.addressing_style "$AWS_S3_ADDRESSING_STYLE" --profile "$AWS_PROFILE"
     
     echo -e "${GREEN}✓ AWS CLI configured with profile: $AWS_PROFILE${NC}"
     echo -e "  Access Key: ${AWS_ACCESS_KEY_ID:0:8}..."
-    echo -e "  Signature Version: s3v4"
-    echo -e "  Addressing Style: path"
+    echo -e "  Region: $AWS_DEFAULT_REGION"
+    echo -e "  Signature Version: $AWS_S3_SIGNATURE_VERSION"
+    echo -e "  Addressing Style: $AWS_S3_ADDRESSING_STYLE"
     echo
 }
 
@@ -266,12 +267,19 @@ main() {
         source .env
         echo -e "${GREEN}✓ Credentials loaded${NC}"
         echo -e "  Access Key: ${AWS_ACCESS_KEY_ID:0:8}..."
+        echo -e "  Secret Key: ${AWS_SECRET_ACCESS_KEY:0:8}..."
+        echo -e "  Region: $AWS_DEFAULT_REGION"
+        echo -e "  Signature Version: $AWS_S3_SIGNATURE_VERSION"
+        echo -e "  Addressing Style: $AWS_S3_ADDRESSING_STYLE"
         echo
     else
         echo -e "${RED}✗ .env file not found. Please ensure S3 credentials are available.${NC}"
         echo -e "${YELLOW}Expected credentials:${NC}"
         echo -e "  AWS_ACCESS_KEY_ID=<your-access-key>"
         echo -e "  AWS_SECRET_ACCESS_KEY=<your-secret-key>"
+        echo -e "  AWS_DEFAULT_REGION=us-east-1"
+        echo -e "  AWS_S3_SIGNATURE_VERSION=s3v4"
+        echo -e "  AWS_S3_ADDRESSING_STYLE=path"
         exit 1
     fi
     

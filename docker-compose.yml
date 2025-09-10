@@ -38,9 +38,6 @@ x-filer-base: &filer-base
       condition: service_healthy
     volume1:
       condition: service_healthy
-  environment:
-    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
   deploy:
     resources:
       limits:
@@ -48,12 +45,31 @@ x-filer-base: &filer-base
         memory: 1G
   volumes:
     - /data
+  command: "filer -master=master1:9333,master2:9333,master3:9333 -ip=0.0.0.0 -port=8888 -dataCenter=dc1 -maxMB=1024"
   healthcheck: &filer-healthcheck
     test: ["CMD", "wget", "--spider", "-q", "http://localhost:8888/"]
     interval: 10s
     timeout: 5s
     retries: 3
     start_period: 15s
+    
+# New: S3 Gateway base configuration
+x-s3-base: &s3-base
+  <<: *seaweedfs
+  volumes:
+    - ./s3.toml:/s3.toml
+  deploy:
+    resources:
+      limits:
+        cpus: '0.5'
+        memory: 512M
+  command: "s3 -filer=filer:8888 -ip.bind=0.0.0.0 -port=8333"
+  healthcheck: &s3-healthcheck
+    test: ["CMD", "sh", "-c", "netstat -tlnp | grep :8333"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+    start_period: 10s
 
 services:
   # Master servers using base configuration
@@ -118,26 +134,20 @@ services:
       <<: *volume-healthcheck
       test: ["CMD", "wget", "--spider", "-q", "http://volume3:8080/status"]
 
-  # Filer servers using base configuration
-  filer1:
+  # Filer server
+  filer:
     <<: *filer-base
-    container_name: filer1
+    container_name: filer
     volumes:
-      - filer1_data:/data
-    command: "filer -master=master1:9333,master2:9333,master3:9333 -ip=filer1 -port=8888 -port.grpc=18888 -s3 -s3.port=8333 -s3.allowEmptyFolder=true -dataCenter=dc1 -maxMB=1024"
-    healthcheck:
-      <<: *filer-healthcheck
-      test: ["CMD", "wget", "--spider", "-q", "http://filer1:8888/"]
+      - filer_data:/data
 
-  filer2:
-    <<: *filer-base
-    container_name: filer2
-    volumes:
-      - filer2_data:/data
-    command: "filer -master=master1:9333,master2:9333,master3:9333 -ip=filer2 -port=8888 -port.grpc=18888 -s3 -s3.port=8333 -s3.allowEmptyFolder=true -dataCenter=dc1 -maxMB=1024"
-    healthcheck:
-      <<: *filer-healthcheck
-      test: ["CMD", "wget", "--spider", "-q", "http://filer2:8888/"]
+  # S3 Gateway server
+  s3:
+    <<: *s3-base
+    container_name: s3
+    depends_on:
+      filer:
+        condition: service_healthy
 
   # API server (no changes needed)
   api:
@@ -149,7 +159,7 @@ services:
     environment:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      SEAWEED_S3_URL: ${SEAWEED_S3_URL}
+      SEAWEED_S3_URL: http://s3:8333
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -167,7 +177,7 @@ services:
     container_name: proxy
     ports:
       - "80:80"
-      - "8080:8080"
+      - "8888:8888"
       - "8333:8333"
     volumes:
       - ./.htpasswd:/etc/nginx/.htpasswd
@@ -175,10 +185,6 @@ services:
       - internal
       - external
     depends_on:
-      filer1:
-        condition: service_healthy
-      filer2:
-        condition: service_healthy
       master1:
         condition: service_healthy
       master2:
@@ -190,6 +196,10 @@ services:
       volume2:
         condition: service_healthy
       volume3:
+        condition: service_healthy
+      filer:
+        condition: service_healthy
+      s3:
         condition: service_healthy
       api:
         condition: service_healthy
@@ -207,5 +217,4 @@ volumes:
   volume1_data:
   volume2_data:
   volume3_data:
-  filer1_data:
-  filer2_data:
+  filer_data:

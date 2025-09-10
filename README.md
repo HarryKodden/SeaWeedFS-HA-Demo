@@ -280,6 +280,63 @@ deploy:
       cpus: '2.0'
 ```
 
+**S3 Options**
+
+The `AWS_S3_ADDRESSING_STYLE` environment variable controls how AWS CLI and SDKs construct S3 URLs. Here are the available variants:
+
+## Available Variants:
+
+### **1. `path` (Recommended for SeaWeedFS)**
+- **URL Format:** `http://endpoint/bucket/key`
+- **Example:** `http://localhost:8333/my-bucket/my-file.txt`
+- **Compatibility:** Works with all bucket names, including those with dots
+- **SeaWeedFS:** This is the default and recommended style for SeaWeedFS S3
+
+### **2. `virtual`**
+- **URL Format:** `http://bucket.endpoint/key`
+- **Example:** `http://my-bucket.localhost:8333/my-file.txt`
+- **Compatibility:** May not work with buckets containing dots or special characters
+- **SeaWeedFS:** Supported but may cause issues with certain bucket names
+
+### **3. `auto`**
+- **URL Format:** Automatically chooses between `path` and `virtual`
+- **Logic:** Uses `virtual` for simple bucket names, `path` for complex ones
+- **Compatibility:** Best of both worlds, but less predictable
+- **SeaWeedFS:** May work, but `path` is more reliable
+
+## Recommended Configuration for SeaWeedFS:
+
+```bash
+# In your .env file
+AWS_S3_ADDRESSING_STYLE=path
+```
+
+## Why `path` is Recommended:
+
+- **SeaWeedFS Implementation:** Uses path-style addressing internally
+- **Bucket Name Flexibility:** Works with any bucket name format
+- **Consistency:** Matches how SeaWeedFS handles S3 requests
+- **Compatibility:** Avoids issues with virtual hosting limitations
+
+## Testing Different Styles:
+
+You can test the addressing styles with your current setup:
+
+```bash
+# Test with path style (current)
+AWS_S3_ADDRESSING_STYLE=path aws s3 ls s3://test-bucket --endpoint-url=http://localhost:8333
+
+# Test with virtual style
+AWS_S3_ADDRESSING_STYLE=virtual aws s3 ls s3://test-bucket --endpoint-url=http://localhost:8333
+
+# Test with auto style
+AWS_S3_ADDRESSING_STYLE=auto aws s3 ls s3://test-bucket --endpoint-url=http://localhost:8333
+```
+
+For SeaWeedFS, stick with `path` style for the most reliable operation! 🎯
+
+**Note:** The addressing style affects how URLs are constructed but doesn't change the underlying S3 API functionality. SeaWeedFS handles both styles, but `path` is the most compatible.
+
 ## 📚 API Documentation
 
 The API includes comprehensive documentation:

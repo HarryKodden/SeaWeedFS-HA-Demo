@@ -16,6 +16,9 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 import urllib.parse
 import secrets
+import boto3
+from botocore.exceptions import ClientError, NoCredentialsError
+import requests
 
 # Pydantic models for better Swagger documentation
 class ContainerStatus(BaseModel):
@@ -36,6 +39,17 @@ class S3Operation(BaseModel):
     key: str = Field(..., description="S3 object key")
     size: int = Field(..., description="Object size in bytes")
 
+class S3ObjectInfo(BaseModel):
+    bucket: str = Field(..., description="S3 bucket name")
+    key: str = Field(..., description="S3 object key")
+    size: int = Field(..., description="Object size in bytes")
+    last_modified: str = Field(..., description="Last modified timestamp")
+    etag: str = Field(..., description="Object ETag")
+
+class S3BucketInfo(BaseModel):
+    name: str = Field(..., description="Bucket name")
+    creation_date: Optional[str] = Field(None, description="Bucket creation date")
+
 class HealthResponse(BaseModel):
     status: str = Field(..., description="API health status")
     timestamp: str = Field(..., description="Current timestamp")
@@ -46,6 +60,12 @@ class ContainerList(BaseModel):
 
 class S3OperationsResponse(BaseModel):
     operations: List[S3Operation] = Field(..., description="List of S3 operations")
+
+class S3ObjectsResponse(BaseModel):
+    objects: List[S3ObjectInfo] = Field(..., description="List of S3 objects")
+
+class S3BucketsResponse(BaseModel):
+    buckets: List[S3BucketInfo] = Field(..., description="List of S3 buckets")
 
 app = FastAPI(
     title="SeaweedFS Cluster Management API",
@@ -58,7 +78,7 @@ app = FastAPI(
 
     * **Container Management**: Start, stop, and monitor SeaweedFS containers
     * **Health Monitoring**: Real-time health checks for all cluster components
-    * **S3 Operations**: Mock S3 operation data for testing and monitoring
+    * **S3 Operations**: Full S3-compatible operations for buckets and objects
     * **Interactive Documentation**: Full Swagger UI and ReDoc for testing endpoints
 
     ## 🔐 Authentication
@@ -84,13 +104,20 @@ app = FastAPI(
     - `GET /api/containers` - List all containers
 
     ### S3 Operations
+    - `GET /api/s3/buckets` - List all buckets
+    - `PUT /api/s3/buckets/{bucket_name}` - Create bucket
+    - `DELETE /api/s3/buckets/{bucket_name}` - Delete bucket
+    - `GET /api/s3/buckets/{bucket_name}/objects` - List objects in bucket
+    - `POST /api/s3/buckets/{bucket_name}/objects/{object_key}` - Create/update object
+    - `GET /api/s3/buckets/{bucket_name}/objects/{object_key}` - Get object
+    - `DELETE /api/s3/buckets/{bucket_name}/objects/{object_key}` - Delete object
     - `GET /api/s3-operations` - Get S3 operations (mock data)
 
     ## 🏷️ Tags
 
     - **Health**: Health check and monitoring endpoints
     - **Containers**: Container management operations
-    - **S3**: S3-related operations and data
+    - **S3**: S3-compatible operations for buckets and objects
 
     ## 📞 Support
 
@@ -136,7 +163,7 @@ app = FastAPI(
         },
         {
             "name": "S3",
-            "description": "S3-related operations and data",
+            "description": "S3-compatible operations for buckets and objects",
         },
     ]
 )
@@ -152,6 +179,31 @@ app.add_middleware(
 
 # Security scheme for Swagger UI
 security = HTTPBasic()
+
+# S3 client dependency
+def get_s3_client():
+    """Create and return S3 client for SeaWeedFS"""
+    try:
+        s3_url = os.getenv('SEAWEED_S3_URL', 'http://s3_1:8333')
+        access_key = os.getenv('AWS_ACCESS_KEY_ID')
+        secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+        
+        if not access_key or not secret_key:
+            raise HTTPException(status_code=500, detail="S3 credentials not configured. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in environment variables.")
+        
+        return boto3.client(
+            's3',
+            endpoint_url=s3_url,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name=os.getenv('AWS_DEFAULT_REGION', ''),
+            config=boto3.session.Config(
+                signature_version='s3v4',
+                s3={'addressing_style': os.getenv('AWS_S3_ADDRESSING_STYLE', 'path')}
+            )
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"S3 client initialization failed: {str(e)}")
 
 # Docker client dependency
 def get_docker_client():
@@ -261,6 +313,7 @@ async def get_container_health(container_name: str, client: docker.DockerClient 
     - **Filers**: Check HTTP endpoint on port 8888
     - **Masters**: Check cluster status on port 9333  
     - **Volumes**: Check status endpoint on port 8080
+    - **S3 Gateways**: Check S3 endpoint on port 8333
     
     - **container_name**: The name of the container to check
     - Returns health status and overall container status
@@ -297,6 +350,14 @@ async def get_container_health(container_name: str, client: docker.DockerClient 
                 import requests
                 response = requests.get(f"http://{container_name}:8080/status", timeout=5)
                 health_status = "healthy" if response.status_code == 200 else "unhealthy"
+            except:
+                health_status = "unhealthy"
+        elif container_type == 's3':
+            # For S3 gateways, check S3 endpoint (accepts 200 or 403 as healthy)
+            try:
+                import requests
+                response = requests.get(f"http://{container_name}:8333", timeout=5)
+                health_status = "healthy" if response.status_code in [200, 403] else "unhealthy"
             except:
                 health_status = "unhealthy"
         
@@ -521,11 +582,437 @@ async def list_containers(client: docker.DockerClient = Depends(get_docker_clien
                     "image": container.image.tags[0] if container.image.tags else "unknown"
                 }
                 for container in containers
-                if any(keyword in container.name.lower() for keyword in ['master', 'volume', 'filer'])
+                if any(keyword in container.name.lower() for keyword in ['master', 'volume', 'filer', 's3'])
             ]
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# S3 Bucket Operations
+@app.get("/api/s3/buckets",
+         summary="List S3 Buckets",
+         description="List all S3 buckets in the SeaweedFS cluster",
+         response_model=S3BucketsResponse,
+         tags=["S3"],
+         responses={
+             200: {
+                 "description": "Buckets listed successfully",
+                 "content": {
+                     "application/json": {
+                         "example": {
+                             "buckets": [
+                                 {
+                                     "name": "test-bucket",
+                                     "creation_date": "2025-09-09T14:28:30.123456Z"
+                                 }
+                             ]
+                         }
+                     }
+                 }
+             }
+         })
+async def list_s3_buckets(s3_client = Depends(get_s3_client)):
+    """
+    List all S3 buckets.
+    
+    Returns a list of all buckets in the SeaweedFS S3 service.
+    """
+    try:
+        response = s3_client.list_buckets()
+        buckets = [
+            {
+                "name": bucket['Name'],
+                "creation_date": bucket['CreationDate'].isoformat() if bucket.get('CreationDate') else None
+            }
+            for bucket in response.get('Buckets', [])
+        ]
+        return {"buckets": buckets}
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code in ['EndpointConnectionError', 'NetworkError', 'ConnectionError']:
+            raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+        else:
+            raise HTTPException(status_code=500, detail=f"S3 error: {error_code} - {e.response['Error']['Message']}")
+    except Exception as e:
+        if 'connection' in str(e).lower() or 'endpoint' in str(e).lower():
+            raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+        else:
+            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+@app.put("/api/s3/buckets/{bucket_name}",
+         summary="Create S3 Bucket",
+         description="Create a new S3 bucket in the SeaweedFS cluster",
+         tags=["S3"],
+         responses={
+             200: {
+                 "description": "Bucket created successfully",
+                 "content": {
+                     "application/json": {
+                         "example": {"message": "Bucket 'test-bucket' created successfully"}
+                     }
+                 }
+             },
+             409: {
+                 "description": "Bucket already exists",
+                 "content": {
+                     "application/json": {
+                         "example": {"detail": "Bucket 'test-bucket' already exists"}
+                     }
+                 }
+             }
+         })
+async def create_s3_bucket(bucket_name: str, s3_client = Depends(get_s3_client)):
+    """
+    Create a new S3 bucket.
+    
+    - **bucket_name**: Name of the bucket to create
+    - Returns success message if bucket is created
+    """
+    try:
+        s3_client.create_bucket(Bucket=bucket_name)
+        return {"message": f"Bucket '{bucket_name}' created successfully"}
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code in ['BucketAlreadyExists', 'BucketAlreadyOwnedByYou']:
+            raise HTTPException(status_code=409, detail=f"Bucket '{bucket_name}' already exists")
+        elif error_code in ['EndpointConnectionError', 'NetworkError', 'ConnectionError']:
+            raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+        else:
+            raise HTTPException(status_code=500, detail=f"S3 error: {error_code} - {e.response['Error']['Message']}")
+    except Exception as e:
+        if 'connection' in str(e).lower() or 'endpoint' in str(e).lower():
+            raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+        else:
+            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+@app.delete("/api/s3/buckets/{bucket_name}",
+            summary="Delete S3 Bucket",
+            description="Delete an empty S3 bucket from the SeaweedFS cluster",
+            tags=["S3"],
+            responses={
+                200: {
+                    "description": "Bucket deleted successfully",
+                    "content": {
+                        "application/json": {
+                            "example": {"message": "Bucket 'test-bucket' deleted successfully"}
+                        }
+                    }
+                },
+                404: {
+                    "description": "Bucket not found",
+                    "content": {
+                        "application/json": {
+                            "example": {"detail": "Bucket 'test-bucket' not found"}
+                        }
+                    }
+                }
+            })
+async def delete_s3_bucket(bucket_name: str, s3_client = Depends(get_s3_client)):
+    """
+    Delete an S3 bucket.
+    
+    The bucket must be empty before deletion.
+    
+    - **bucket_name**: Name of the bucket to delete
+    - Returns success message if bucket is deleted
+    """
+    try:
+        s3_client.delete_bucket(Bucket=bucket_name)
+        return {"message": f"Bucket '{bucket_name}' deleted successfully"}
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == 'NoSuchBucket':
+            raise HTTPException(status_code=404, detail=f"Bucket '{bucket_name}' not found")
+        elif error_code == 'BucketNotEmpty':
+            raise HTTPException(status_code=409, detail=f"Bucket '{bucket_name}' is not empty")
+        elif error_code in ['EndpointConnectionError', 'NetworkError', 'ConnectionError']:
+            raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+        else:
+            raise HTTPException(status_code=500, detail=f"S3 error: {error_code} - {e.response['Error']['Message']}")
+    except Exception as e:
+        if 'connection' in str(e).lower() or 'endpoint' in str(e).lower():
+            raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+        else:
+            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+# S3 Object Operations
+@app.get("/api/s3/buckets/{bucket_name}/objects",
+         summary="List S3 Objects",
+         description="List all objects in an S3 bucket",
+         response_model=S3ObjectsResponse,
+         tags=["S3"],
+         responses={
+             200: {
+                 "description": "Objects listed successfully",
+                 "content": {
+                     "application/json": {
+                         "example": {
+                             "objects": [
+                                 {
+                                     "bucket": "test-bucket",
+                                     "key": "test-file.txt",
+                                     "size": 1024,
+                                     "last_modified": "2025-09-09T14:28:30.123456Z",
+                                     "etag": "\"abc123\""
+                                 }
+                             ]
+                         }
+                     }
+                 }
+             },
+             404: {
+                 "description": "Bucket not found",
+                 "content": {
+                     "application/json": {
+                         "example": {"detail": "Bucket 'test-bucket' not found"}
+                     }
+                 }
+             }
+         })
+async def list_s3_objects(bucket_name: str, s3_client = Depends(get_s3_client)):
+    """
+    List all objects in an S3 bucket.
+    
+    - **bucket_name**: Name of the bucket to list objects from
+    - Returns list of objects with metadata
+    """
+    try:
+        response = s3_client.list_objects_v2(Bucket=bucket_name)
+        objects = [
+            {
+                "bucket": bucket_name,
+                "key": obj['Key'],
+                "size": obj.get('Size', 0),
+                "last_modified": obj['LastModified'].isoformat() if obj.get('LastModified') else None,
+                "etag": obj.get('ETag', '')
+            }
+            for obj in response.get('Contents', [])
+        ]
+        return {"objects": objects}
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == 'NoSuchBucket':
+            raise HTTPException(status_code=404, detail=f"Bucket '{bucket_name}' not found")
+        elif error_code in ['EndpointConnectionError', 'NetworkError', 'ConnectionError']:
+            raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+        else:
+            raise HTTPException(status_code=500, detail=f"S3 error: {error_code} - {e.response['Error']['Message']}")
+    except Exception as e:
+        if 'connection' in str(e).lower() or 'endpoint' in str(e).lower():
+            raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+        else:
+            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+@app.post("/api/s3/buckets/{bucket_name}/objects/{object_key}",
+          summary="Create/Update S3 Object",
+          description="Create or update an S3 object with provided content",
+          tags=["S3"],
+          responses={
+              200: {
+                  "description": "Object created/updated successfully",
+                  "content": {
+                      "application/json": {
+                          "example": {
+                              "message": "Object 'test-file.txt' created successfully",
+                              "bucket": "test-bucket",
+                              "key": "test-file.txt",
+                              "size": 1024
+                          }
+                      }
+                  }
+              },
+              404: {
+                  "description": "Bucket not found",
+                  "content": {
+                      "application/json": {
+                          "example": {"detail": "Bucket 'test-bucket' not found"}
+                      }
+                  }
+              }
+          })
+async def create_s3_object(bucket_name: str, object_key: str, content: str = "", size_kb: int = 10, s3_client = Depends(get_s3_client)):
+    """
+    Create or update an S3 object.
+    
+    - **bucket_name**: Name of the bucket
+    - **object_key**: Key of the object to create/update
+    - **content**: Content to store in the object (optional)
+    - **size_kb**: Size of the object in KB (for mock content generation)
+    - Returns success message with object details
+    """
+    try:
+        # Generate mock content if not provided
+        if not content:
+            content = "x" * (size_kb * 1024)  # Generate content of specified size
+        
+        s3_client.put_object(
+            Bucket=bucket_name,
+            Key=object_key,
+            Body=content.encode('utf-8')
+        )
+        
+        return {
+            "message": f"Object '{object_key}' created successfully",
+            "bucket": bucket_name,
+            "key": object_key,
+            "size": len(content)
+        }
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == 'NoSuchBucket':
+            # Auto-create bucket if it doesn't exist
+            try:
+                s3_client.create_bucket(Bucket=bucket_name)
+                # Retry put_object
+                s3_client.put_object(
+                    Bucket=bucket_name,
+                    Key=object_key,
+                    Body=content.encode('utf-8')
+                )
+                return {
+                    "message": f"Bucket '{bucket_name}' created and object '{object_key}' uploaded successfully",
+                    "bucket": bucket_name,
+                    "key": object_key,
+                    "size": len(content)
+                }
+            except ClientError as create_e:
+                if create_e.response['Error']['Code'] in ['BucketAlreadyExists', 'BucketAlreadyOwnedByYou']:
+                    raise HTTPException(status_code=500, detail=f"Bucket '{bucket_name}' exists but object upload failed: {create_e.response['Error']['Message']}")
+                else:
+                    raise HTTPException(status_code=500, detail=f"Failed to create bucket '{bucket_name}': {create_e.response['Error']['Message']}")
+        elif error_code in ['EndpointConnectionError', 'NetworkError', 'ConnectionError']:
+            raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+        else:
+            raise HTTPException(status_code=500, detail=f"S3 error: {error_code} - {e.response['Error']['Message']}")
+    except Exception as e:
+        if 'connection' in str(e).lower() or 'endpoint' in str(e).lower():
+            raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+        else:
+            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+@app.get("/api/s3/buckets/{bucket_name}/objects/{object_key}",
+         summary="Get S3 Object",
+         description="Retrieve an S3 object's content and metadata",
+         tags=["S3"],
+         responses={
+             200: {
+                 "description": "Object retrieved successfully",
+                 "content": {
+                     "application/json": {
+                         "example": {
+                             "bucket": "test-bucket",
+                             "key": "test-file.txt",
+                             "size": 1024,
+                             "content": "file content here...",
+                             "last_modified": "2025-09-09T14:28:30.123456Z",
+                             "etag": "\"abc123\""
+                         }
+                     }
+                 }
+             },
+             404: {
+                 "description": "Object not found",
+                 "content": {
+                     "application/json": {
+                         "example": {"detail": "Object 'test-file.txt' not found in bucket 'test-bucket'"}
+                     }
+                 }
+             }
+         })
+async def get_s3_object(bucket_name: str, object_key: str, s3_client = Depends(get_s3_client)):
+    """
+    Get an S3 object's content and metadata.
+    
+    - **bucket_name**: Name of the bucket
+    - **object_key**: Key of the object to retrieve
+    - Returns object content and metadata
+    """
+    try:
+        response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
+        
+        content = response['Body'].read().decode('utf-8')
+        
+        return {
+            "bucket": bucket_name,
+            "key": object_key,
+            "size": response.get('ContentLength', 0),
+            "content": content,
+            "last_modified": response['LastModified'].isoformat() if response.get('LastModified') else None,
+            "etag": response.get('ETag', '')
+        }
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == 'NoSuchBucket':
+            raise HTTPException(status_code=404, detail=f"Bucket '{bucket_name}' not found")
+        elif error_code == 'NoSuchKey':
+            raise HTTPException(status_code=404, detail=f"Object '{object_key}' not found in bucket '{bucket_name}'")
+        elif error_code in ['EndpointConnectionError', 'NetworkError', 'ConnectionError']:
+            raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+        else:
+            raise HTTPException(status_code=500, detail=f"S3 error: {error_code} - {e.response['Error']['Message']}")
+    except Exception as e:
+        if 'connection' in str(e).lower() or 'endpoint' in str(e).lower():
+            raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+        else:
+            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+@app.delete("/api/s3/buckets/{bucket_name}/objects/{object_key}",
+            summary="Delete S3 Object",
+            description="Delete an S3 object from a bucket",
+            tags=["S3"],
+            responses={
+                200: {
+                    "description": "Object deleted successfully",
+                    "content": {
+                        "application/json": {
+                            "example": {
+                                "message": "Object 'test-file.txt' deleted successfully",
+                                "bucket": "test-bucket",
+                                "key": "test-file.txt"
+                            }
+                        }
+                    }
+                },
+                404: {
+                    "description": "Object not found",
+                    "content": {
+                        "application/json": {
+                            "example": {"detail": "Object 'test-file.txt' not found in bucket 'test-bucket'"}
+                        }
+                    }
+                }
+            })
+async def delete_s3_object(bucket_name: str, object_key: str, s3_client = Depends(get_s3_client)):
+    """
+    Delete an S3 object.
+    
+    - **bucket_name**: Name of the bucket
+    - **object_key**: Key of the object to delete
+    - Returns success message if object is deleted
+    """
+    try:
+        s3_client.delete_object(Bucket=bucket_name, Key=object_key)
+        
+        return {
+            "message": f"Object '{object_key}' deleted successfully",
+            "bucket": bucket_name,
+            "key": object_key
+        }
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == 'NoSuchBucket':
+            raise HTTPException(status_code=404, detail=f"Bucket '{bucket_name}' not found")
+        elif error_code == 'NoSuchKey':
+            raise HTTPException(status_code=404, detail=f"Object '{object_key}' not found in bucket '{bucket_name}'")
+        elif error_code in ['EndpointConnectionError', 'NetworkError', 'ConnectionError']:
+            raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+        else:
+            raise HTTPException(status_code=500, detail=f"S3 error: {error_code} - {e.response['Error']['Message']}")
+    except Exception as e:
+        if 'connection' in str(e).lower() or 'endpoint' in str(e).lower():
+            raise HTTPException(status_code=503, detail="S3 service is not available. Please check if the S3 container is running and accessible.")
+        else:
+            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 def get_container_type(container_name: str) -> str:
     """Determine container type from name"""
@@ -535,6 +1022,8 @@ def get_container_type(container_name: str) -> str:
         return 'master'
     elif 'volume' in container_name.lower():
         return 'volume'
+    elif 's3' in container_name.lower():
+        return 's3'
     return 'unknown'
 
 def get_health_check_url(container_name: str) -> str:
@@ -547,6 +1036,8 @@ def get_health_check_url(container_name: str) -> str:
         return f"http://{container_name}:9333/cluster/status"
     elif container_type == 'volume':
         return f"http://{container_name}:8080/status"
+    elif container_type == 's3':
+        return f"http://{container_name}:8333"
     else:
         return None
 

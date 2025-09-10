@@ -3,33 +3,75 @@
 # Script to set up and start the SeaweedFS HA cluster with basic authentication
 # 
 # Usage: 
-#   ./setup_cluster.sh [username] [password] [domain]
+#   ./setup_cluster.sh [OPTIONS]
 # 
-# Parameters:
-#   username - Admin username for cluster management (default: admin)
-#   password - Admin password for cluster management (default: seaweedadmin)
-#   domain   - Domain name for the cluster (default: example.com)
-#
-# This script:
-#   1. Creates authentication credentials for the admin interface
-#   2. Generates S3 API credentials
-#   3. Creates a .env file with all configuration
-#   4. Builds the Docker images
-#   5. Starts the SeaweedFS HA cluster with 3 masters, 3 volumes, and 2 filers
+# Options:
+#   -u USERNAME              Admin username for cluster management (default: admin)
+#   -p PASSWORD              Admin password for cluster management (default: seaweedadmin)
+#   -d DOMAIN                Domain name for the cluster (default: example.com)
+#   -a AWS_ACCESS_KEY_ID     AWS access key ID (default: generated)
+#   -s AWS_SECRET_ACCESS_KEY AWS secret access key (default: generated)
+#   -r AWS_REGION            AWS region (default: us-east-1)
+#   -v AWS_S3_SIGNATURE_VERSION S3 signature version (default: s3v4)
+#   -t AWS_S3_ADDRESSING_STYLE S3 addressing style (default: path)
+#   -h                       Show this help message
 
 # Default values
 DEFAULT_USERNAME="admin"
 DEFAULT_PASSWORD="seaweedadmin"
 DEFAULT_DOMAIN="example.com"
-
-# Generate random S3 credentials if needed
 RANDOM_ACCESS_KEY=$(openssl rand -hex 20)
 RANDOM_SECRET_KEY=$(openssl rand -hex 40)
+DEFAULT_AWS_REGION="us-east-1"
+DEFAULT_AWS_S3_SIGNATURE_VERSION="s3v4"
+DEFAULT_AWS_S3_ADDRESSING_STYLE="path"
 
 # Use provided credentials or defaults
-USERNAME=${1:-$DEFAULT_USERNAME}
-PASSWORD=${2:-$DEFAULT_PASSWORD}
-DOMAIN=${3:-$DEFAULT_DOMAIN}
+USERNAME="$DEFAULT_USERNAME"
+PASSWORD="$DEFAULT_PASSWORD"
+DOMAIN="$DEFAULT_DOMAIN"
+AWS_ACCESS_KEY_ID="$RANDOM_ACCESS_KEY"
+AWS_SECRET_ACCESS_KEY="$RANDOM_SECRET_KEY"
+AWS_REGION="$DEFAULT_AWS_REGION"
+AWS_S3_SIGNATURE_VERSION="$DEFAULT_AWS_S3_SIGNATURE_VERSION"
+AWS_S3_ADDRESSING_STYLE="$DEFAULT_AWS_S3_ADDRESSING_STYLE"
+
+# Function to display usage
+usage() {
+    echo "Usage: $0 [OPTIONS]"
+    echo
+    echo "Options:"
+    echo "  -u USERNAME              Admin username for cluster management (default: admin)"
+    echo "  -p PASSWORD              Admin password for cluster management (default: seaweedadmin)"
+    echo "  -d DOMAIN                Domain name for the cluster (default: example.com)"
+    echo "  -a AWS_ACCESS_KEY_ID     AWS access key ID (default: generated)"
+    echo "  -s AWS_SECRET_ACCESS_KEY AWS secret access key (default: generated)"
+    echo "  -r AWS_REGION            AWS region (default: us-east-1)"
+    echo "  -v AWS_S3_SIGNATURE_VERSION S3 signature version (default: s3v4)"
+    echo "  -t AWS_S3_ADDRESSING_STYLE S3 addressing style (default: path)"
+    echo "  -h                       Show this help message"
+    echo
+    echo "Examples:"
+    echo "  $0 -u myadmin -p mypass123"
+    echo "  $0 -d mydomain.com -a my-access-key -s my-secret-key"
+    exit 1
+}
+
+# Parse command line options
+while getopts "u:p:d:a:s:r:v:t:h" opt; do
+    case $opt in
+        u) USERNAME="$OPTARG" ;;
+        p) PASSWORD="$OPTARG" ;;
+        d) DOMAIN="$OPTARG" ;;
+        a) AWS_ACCESS_KEY_ID="$OPTARG" ;;
+        s) AWS_SECRET_ACCESS_KEY="$OPTARG" ;;
+        r) AWS_REGION="$OPTARG" ;;
+        v) AWS_S3_SIGNATURE_VERSION="$OPTARG" ;;
+        t) AWS_S3_ADDRESSING_STYLE="$OPTARG" ;;
+        h) usage ;;
+        *) usage ;;
+    esac
+done
 
 echo "Setting up SeaweedFS HA cluster..."
 
@@ -94,9 +136,28 @@ SEAWEED_AUTH_USER=${USERNAME}
 SEAWEED_AUTH_PASSWORD=${PASSWORD}
 
 # S3 API credentials
-AWS_ACCESS_KEY_ID=${RANDOM_ACCESS_KEY}
-AWS_SECRET_ACCESS_KEY=${RANDOM_SECRET_KEY}
+AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+AWS_DEFAULT_REGION=${AWS_REGION}
+AWS_S3_SIGNATURE_VERSION=${AWS_S3_SIGNATURE_VERSION}
+AWS_S3_ADDRESSING_STYLE=${AWS_S3_ADDRESSING_STYLE}
 EOL
+
+# Create S3 config file for SeaWeedFS
+echo "Creating S3 config file for SeaWeedFS"
+cat > s3.toml << EOL
+# SeaWeedFS S3 Configuration
+# Generated on $(date)
+
+[s3]
+access_key = "${AWS_ACCESS_KEY_ID}"
+secret_key = "${AWS_SECRET_ACCESS_KEY}"
+region = "${AWS_REGION}"
+signature_version = "${AWS_S3_SIGNATURE_VERSION}"
+addressing_style = "${AWS_S3_ADDRESSING_STYLE}"
+EOL
+
+echo "✓ Created s3_config.toml file"
 
 # Build the Docker images
 echo "Building Docker images..."
@@ -114,6 +175,7 @@ if ! docker compose up -d; then
     exit 1
 fi
 
+# Wait for services to start
 echo "Waiting for services to start..."
 echo "This may take a moment as containers initialize..."
 sleep 15
@@ -135,7 +197,7 @@ echo "- Filer 1:       http://localhost/filer/1/"
 echo "- API Docs:      http://localhost/api/docs"
 echo ""
 echo "🔗 Filer:"
-echo "- Filer:         http://localhost:8080/"
+echo "- Filer:         http://localhost:8888/"
 echo ""
 echo "🔗 S3 API:"
 echo "--------------------------------------"
@@ -148,12 +210,16 @@ echo "Password: $PASSWORD"
 echo ""
 echo "🔑 S3 API Credentials:"
 echo "--------------------------------------"
-echo "Access Key: $RANDOM_ACCESS_KEY"
-echo "Secret Key: $RANDOM_SECRET_KEY"
+echo "Access Key: $AWS_ACCESS_KEY_ID"
+echo "Secret Key: $AWS_SECRET_ACCESS_KEY"
+echo "Region: $AWS_REGION"
+echo "Signature Version: $AWS_S3_SIGNATURE_VERSION"
+echo "Addressing Style: $AWS_S3_ADDRESSING_STYLE"
 echo ""
 echo "📝 Environment Configuration:"
 echo "--------------------------------------"
 echo "All configuration has been saved to .env file"
+echo "S3 config has been saved to s3_config.toml"
 echo "Docker GID set to: $DOCKER_GID"
 echo ""
 echo "======================================================================================"

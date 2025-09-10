@@ -351,6 +351,43 @@
         .api-buttons button:first-child {
             margin-left: 0; /* Remove left margin from first button */
         }
+
+        /* Service Sections */
+        .service-section {
+            margin-top: 40px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .service-section h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        .service-buttons {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+        }
+        .service-buttons button {
+            flex: 1;
+            padding: 10px;
+            font-size: 14px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background-color: #3498db;
+            color: white;
+            transition: background-color 0.3s ease;
+        }
+        .service-buttons button:hover {
+            background-color: #2980b9;
+        }
+        .service-info {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+        }
     </style>
 </head>
 <body>
@@ -535,65 +572,65 @@
         </div>
     </div>
     
-    <h2>Filer Servers</h2>
+    <h2>Filer & S3 Gateway</h2>
     <div class="server-grid">
-        <div class="server-card" id="filer1-card">
+        <div class="server-card" id="filer-card">
             <div class="server-header">
-                <h3>Filer 1</h3>
+                <h3>Filer</h3>
                 <div class="switch-container">
                     <label class="switch">
-                        <input type="checkbox" checked id="filer1-switch" onchange="toggleServer('filer1')">
+                        <input type="checkbox" checked id="filer-switch" onchange="toggleServer('filer')">
                         <span class="slider round"></span>
                     </label>
                 </div>
             </div>
-            <p>Metadata server with S3 API access (Port 8333)</p>
+            <p>Metadata server for file operations</p>
             <div class="status-section">
                 <div style="margin-bottom: 5px;">
-                    <span class="status-indicator status-unknown" id="filer1-status"></span>
-                    <span id="filer1-status-text">Checking status...</span>
+                    <span class="status-indicator status-unknown" id="filer-status"></span>
+                    <span id="filer-status-text">Checking status...</span>
                 </div>
                 <div style="font-size: 12px; color: #666;">
-                    <span class="status-indicator status-unknown" id="filer1-health"></span>
-                    <span id="filer1-health-text">Checking health...</span>
+                    <span class="status-indicator status-unknown" id="filer-health"></span>
+                    <span id="filer-health-text">Checking health...</span>
                 </div>
             </div>
-            <div class="recovery-message" id="filer1-recovery" style="display: none;">
+            <div class="recovery-message" id="filer-recovery" style="display: none;">
                 <div class="recovery-indicator"></div>
                 <span>Rebuilding metadata...</span>
             </div>
-            <a href="/filer/1/">Access Filer 1</a>
+            <a href="/filer/1/">Access Filer</a>
         </div>
         
-        <div class="server-card" id="filer2-card">
+        <div class="server-card" id="s3-card">
             <div class="server-header">
-                <h3>Filer 2</h3>
+                <h3>S3 Gateway</h3>
                 <div class="switch-container">
                     <label class="switch">
-                        <input type="checkbox" checked id="filer2-switch" onchange="toggleServer('filer2')">
+                        <input type="checkbox" checked id="s3-switch" onchange="toggleServer('s3')">
                         <span class="slider round"></span>
                     </label>
                 </div>
             </div>
-            <p>Metadata server with S3 API access (Port 8333)</p>
+            <p>S3-compatible object storage API</p>
             <div class="status-section">
                 <div style="margin-bottom: 5px;">
-                    <span class="status-indicator status-unknown" id="filer2-status"></span>
-                    <span id="filer2-status-text">Checking status...</span>
+                    <span class="status-indicator status-unknown" id="s3-status"></span>
+                    <span id="s3-status-text">Checking status...</span>
                 </div>
                 <div style="font-size: 12px; color: #666;">
-                    <span class="status-indicator status-unknown" id="filer2-health"></span>
-                    <span id="filer2-health-text">Checking health...</span>
+                    <span class="status-indicator status-unknown" id="s3-health"></span>
+                    <span id="s3-health-text">Checking health...</span>
                 </div>
             </div>
-            <div class="recovery-message" id="filer2-recovery" style="display: none;">
+            <div class="recovery-message" id="s3-recovery" style="display: none;">
                 <div class="recovery-indicator"></div>
-                <span>Rebuilding metadata...</span>
+                <span>Rebuilding S3 metadata...</span>
             </div>
-            <a href="/filer/2/">Access Filer 2</a>
+            <a href="http://localhost:8333" target="_blank">Access S3 Gateway</a>
         </div>
     </div>
-
+    
     <h2>S3 Operations Stream</h2>
     <div class="s3-operations-container" style="margin-top: 20px; margin-bottom: 30px;">
         <div class="server-card" style="width: 100%;">
@@ -680,22 +717,23 @@
             volume1: { isOnline: true, isHealthy: true },
             volume2: { isOnline: true, isHealthy: true },
             volume3: { isOnline: true, isHealthy: true },
-            filer1: { isOnline: true, isHealthy: true },
-            filer2: { isOnline: true, isHealthy: true }
+            filer: { isOnline: true, isHealthy: true },
+            s3: { isOnline: true, isHealthy: true },
         };
         
         // Track cluster health
         const clusterHealth = {
             mastersOnline: 3,
             volumesOnline: 3,
-            filersOnline: 2,
+            filersOnline: 1,
+            s3Online: 1,
             isHealthy: true,
             failoverInProgress: false
         };
         
         // Check server status and update UI
         async function checkServerStatus() {
-            const servers = ['master1', 'master2', 'master3', 'volume1', 'volume2', 'volume3', 'filer1', 'filer2'];
+            const servers = ['master1', 'master2', 'master3', 'volume1', 'volume2', 'volume3', 'filer', 's3'];
             
             for (const server of servers) {
                 try {
@@ -855,8 +893,10 @@
                             clusterHealth.mastersOnline--;
                         } else if (server.startsWith('volume')) {
                             clusterHealth.volumesOnline--;
-                        } else if (server.startsWith('filer')) {
+                        } else if (server === 'filer') {
                             clusterHealth.filersOnline--;
+                        } else if (server === 's3') {
+                            clusterHealth.s3Online--;
                         }
                         
                         // Trigger recovery if needed
@@ -873,8 +913,10 @@
                             clusterHealth.mastersOnline++;
                         } else if (server.startsWith('volume')) {
                             clusterHealth.volumesOnline++;
-                        } else if (server.startsWith('filer')) {
+                        } else if (server === 'filer') {
                             clusterHealth.filersOnline++;
+                        } else if (server === 's3') {
+                            clusterHealth.s3Online++;
                         }
                     }
                     
@@ -929,8 +971,11 @@
                 }
                 // Also needed if we're down to 1 master (for 3-node cluster)
                 return clusterHealth.mastersOnline <= 1;
-            } else if (server.startsWith('filer')) {
+            } else if (server === 'filer') {
                 // Filer recovery needed to rebuild metadata
+                return true;
+            } else if (server === 's3') {
+                // S3 recovery needed to rebuild S3 metadata
                 return true;
             } else {
                 // Volume recovery always needed to rebalance
@@ -1004,7 +1049,9 @@
             // Determine cluster health
             clusterHealth.isHealthy = 
                 (clusterHealth.mastersOnline >= 2) && // Need majority of masters
-                (clusterHealth.volumesOnline >= 1);   // Need at least one volume
+                (clusterHealth.volumesOnline >= 1) && // Need at least one volume
+                (clusterHealth.filersOnline >= 1) && // Need filer
+                (clusterHealth.s3Online >= 1); // Need S3
                 
             // If failover is happening, show appropriate logs
             if (clusterHealth.failoverInProgress && window.s3Stream) {
@@ -1257,7 +1304,7 @@
                 
                 // Special formatting for system events
                 if (this.systemEvents.includes(operation.type) || operation.type === 'INFO') {
-                    // Format system events differently
+                    // System events stand out
                     let eventPrefix = '[SYSTEM] ';
                     
                     switch(operation.type) {
@@ -1566,8 +1613,8 @@
         
         // Add this function for debugging
         async function debugAPIEndpoints() {
-            const servers = ['master1', 'master2', 'master3', 'volume1', 'volume2', 'volume3', 'filer1', 'filer2'];
-            
+            const servers = ['master1', 'master2', 'master3', 'volume1', 'volume2', 'volume3', 'filer', 's3'];
+
             console.log('=== API Endpoint Debug ===');
             
             for (const server of servers) {

@@ -4,3 +4,4 @@
 .vscode/
 tmp/
 __pycache__/
+s3.toml
