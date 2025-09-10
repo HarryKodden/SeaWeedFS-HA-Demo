@@ -340,9 +340,16 @@
             border: none;
             border-radius: 4px;
             cursor: pointer;
+            background-color: #3498db; /* Add background color */
+            color: white;
+            transition: background-color 0.3s ease;
         }
         .api-buttons button:hover {
-            opacity: 0.9;
+            background-color: #2980b9; /* Darker blue on hover */
+            opacity: 1; /* Ensure full opacity on hover */
+        }
+        .api-buttons button:first-child {
+            margin-left: 0; /* Remove left margin from first button */
         }
     </style>
 </head>
@@ -661,7 +668,7 @@
     </div>
 
     <footer>
-        <p>SeaweedFS High Availability Cluster Management - Version 3.96 - harry.kodden - at - SURF . nl</p>
+        <p>SeaweedFS High Availability Cluster Management - Version 1.0 - harry.kodden - at - SURF . nl</p>
     </footer>
 
     <script>

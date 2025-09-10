@@ -23,8 +23,8 @@ DEFAULT_PASSWORD="seaweedadmin"
 DEFAULT_DOMAIN="example.com"
 
 # Generate random S3 credentials if needed
-RANDOM_ACCESS_KEY=$(cat /dev/urandom | tr -dc 'A-Z0-9' | fold -w 32 | head -n 1)
-RANDOM_SECRET_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 40 | head -n 1)
+RANDOM_ACCESS_KEY=$(openssl rand -hex 20)
+RANDOM_SECRET_KEY=$(openssl rand -hex 40)
 
 # Use provided credentials or defaults
 USERNAME=${1:-$DEFAULT_USERNAME}

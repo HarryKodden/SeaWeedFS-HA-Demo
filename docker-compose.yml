@@ -1,181 +1,145 @@
+# Define base image of seaweedfs
+x-seaweedfs: &seaweedfs
+  image: chrislusf/seaweedfs:latest
+  restart: unless-stopped
+  networks:
+    - internal
+
+# Define base configurations using YAML anchors
+x-master-base: &master-base
+  <<: *seaweedfs
+  volumes:
+    - /data
+  healthcheck: &master-healthcheck
+    test: ["CMD", "wget", "--spider", "-q", "http://localhost:9333/cluster/status"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+    start_period: 10s
+
+x-volume-base: &volume-base
+  <<: *seaweedfs
+  depends_on:
+    master1:
+      condition: service_healthy
+  volumes:
+    - /data
+  healthcheck: &volume-healthcheck
+    test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/status"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+    start_period: 10s
+
+x-filer-base: &filer-base
+  <<: *seaweedfs
+  depends_on:
+    master1:
+      condition: service_healthy
+    volume1:
+      condition: service_healthy
+  environment:
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+  deploy:
+    resources:
+      limits:
+        cpus: '1'
+        memory: 1G
+  volumes:
+    - /data
+  healthcheck: &filer-healthcheck
+    test: ["CMD", "wget", "--spider", "-q", "http://localhost:8888/"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+    start_period: 15s
+
 services:
-  # Multiple Master servers in a Raft cluster for high availability
+  # Master servers using base configuration
   master1:
-    image: chrislusf/seaweedfs
+    <<: *master-base
     container_name: master1
-#   ports:
-#     - "19333:9333"
-    networks:
-      - internal
     command: "master -port=9333 -ip=master1 -mdir=/data -peers=master1:9333,master2:9333,master3:9333"
     volumes:
       - master1_data:/data
     healthcheck:
+      <<: *master-healthcheck
       test: ["CMD", "wget", "--spider", "-q", "http://master1:9333/cluster/status"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
   master2:
-    image: chrislusf/seaweedfs
+    <<: *master-base
     container_name: master2
-#   ports:
-#     - "29333:9333"
-    networks:
-      - internal
     command: "master -port=9333 -ip=master2 -mdir=/data -peers=master1:9333,master2:9333,master3:9333"
     volumes:
       - master2_data:/data
     healthcheck:
+      <<: *master-healthcheck
       test: ["CMD", "wget", "--spider", "-q", "http://master2:9333/cluster/status"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
   master3:
-    image: chrislusf/seaweedfs
+    <<: *master-base
     container_name: master3
-#   ports:
-#     - "39333:9333"
-    networks:
-      - internal
     command: "master -port=9333 -ip=master3 -mdir=/data -peers=master1:9333,master2:9333,master3:9333"
     volumes:
       - master3_data:/data
     healthcheck:
+      <<: *master-healthcheck
       test: ["CMD", "wget", "--spider", "-q", "http://master3:9333/cluster/status"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
-  # Multiple Volume servers for data redundancy
+  # Volume servers using base configuration
   volume1:
-    image: chrislusf/seaweedfs
+    <<: *volume-base
     container_name: volume1
-#   ports:
-#     - "18080:8080"
-    networks:
-      - internal
-    depends_on:
-      master1:
-        condition: service_healthy
     command: "volume -port=8080 -ip=volume1 -mserver=master1:9333,master2:9333,master3:9333 -dir=/data -max=5 -rack=rack1"
     volumes:
       - volume1_data:/data
     healthcheck:
+      <<: *volume-healthcheck
       test: ["CMD", "wget", "--spider", "-q", "http://volume1:8080/status"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
   volume2:
-    image: chrislusf/seaweedfs
+    <<: *volume-base
     container_name: volume2
-#   ports:
-#     - "28080:8080"
-    networks:
-      - internal
-    depends_on:
-      master1:
-        condition: service_healthy
     command: "volume -port=8080 -ip=volume2 -mserver=master1:9333,master2:9333,master3:9333 -dir=/data -max=5 -rack=rack2"
     volumes:
       - volume2_data:/data
     healthcheck:
+      <<: *volume-healthcheck
       test: ["CMD", "wget", "--spider", "-q", "http://volume2:8080/status"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
   volume3:
-    image: chrislusf/seaweedfs
+    <<: *volume-base
     container_name: volume3
-#   ports:
-#     - "38080:8080"
-    networks:
-      - internal
-    depends_on:
-      master1:
-        condition: service_healthy
     command: "volume -port=8080 -ip=volume3 -mserver=master1:9333,master2:9333,master3:9333 -dir=/data -max=5 -rack=rack3"
     volumes:
       - volume3_data:/data
     healthcheck:
+      <<: *volume-healthcheck
       test: ["CMD", "wget", "--spider", "-q", "http://volume3:8080/status"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
-  # Filer servers with redundancy
+  # Filer servers using base configuration
   filer1:
-    image: chrislusf/seaweedfs
+    <<: *filer-base
     container_name: filer1
-#   ports:
-#     - "18888:8888"
-#     - "18333:8333"
-    networks:
-      - internal
-    depends_on:
-      master1:
-        condition: service_healthy
-      volume1:
-        condition: service_healthy
-    environment:
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 1G
     volumes:
       - filer1_data:/data
-    command: 'filer -master=master1:9333,master2:9333,master3:9333 -ip=filer1 -port=8888 -port.grpc=18888 -s3 -s3.port=8333 -s3.allowEmptyFolder=true -dataCenter=dc1 -maxMB=1024'
+    command: "filer -master=master1:9333,master2:9333,master3:9333 -ip=filer1 -port=8888 -port.grpc=18888 -s3 -s3.port=8333 -s3.allowEmptyFolder=true -dataCenter=dc1 -maxMB=1024"
     healthcheck:
+      <<: *filer-healthcheck
       test: ["CMD", "wget", "--spider", "-q", "http://filer1:8888/"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
 
   filer2:
-    image: chrislusf/seaweedfs
+    <<: *filer-base
     container_name: filer2
-#   ports:
-#     - "28888:8888"
-#     - "28333:8333"
-    networks:
-      - internal
-    depends_on:
-      master1:
-        condition: service_healthy
-      volume1:
-        condition: service_healthy
-    environment:
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 1G
     volumes:
       - filer2_data:/data
-    command: 'filer -master=master1:9333,master2:9333,master3:9333 -ip=filer2 -port=8888 -port.grpc=18888 -s3 -s3.port=8333 -s3.allowEmptyFolder=true -dataCenter=dc1 -maxMB=1024'
+    command: "filer -master=master1:9333,master2:9333,master3:9333 -ip=filer2 -port=8888 -port.grpc=18888 -s3 -s3.port=8333 -s3.allowEmptyFolder=true -dataCenter=dc1 -maxMB=1024"
     healthcheck:
+      <<: *filer-healthcheck
       test: ["CMD", "wget", "--spider", "-q", "http://filer2:8888/"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
 
-  # API server for cluster management
+  # API server (no changes needed)
   api:
     build:
       context: api
@@ -197,14 +161,14 @@ services:
       retries: 3
       start_period: 10s
 
-  # Load balancer for filer service with template rendering
+  # Proxy server (no changes needed)
   proxy:
     build: proxy
     container_name: proxy
     ports:
-      - "80:80"      # Dashboard and API
-      - "8080:8080"  # Filer server
-      - "8333:8333"  # S3 API endpoint
+      - "80:80"
+      - "8080:8080"
+      - "8333:8333"
     volumes:
       - ./.htpasswd:/etc/nginx/.htpasswd
     networks:
@@ -229,7 +193,7 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-        
+
 networks:
   external:
     name: external
