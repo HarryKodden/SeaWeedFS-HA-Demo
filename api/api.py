@@ -196,7 +196,7 @@ def get_s3_client():
             endpoint_url=s3_url,
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
-            region_name=os.getenv('AWS_DEFAULT_REGION', ''),
+            region_name=os.getenv('AWS_DEFAULT_REGION') or None,
             config=boto3.session.Config(
                 signature_version='s3v4',
                 s3={'addressing_style': os.getenv('AWS_S3_ADDRESSING_STYLE', 'path')}

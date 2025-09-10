@@ -9,6 +9,7 @@
 #   -u USERNAME              Admin username for cluster management (default: admin)
 #   -p PASSWORD              Admin password for cluster management (default: seaweedadmin)
 #   -d DOMAIN                Domain name for the cluster (default: example.com)
+#   -i IP_ADDRESS            IP address for server access (default: localhost)
 #   -a AWS_ACCESS_KEY_ID     AWS access key ID (default: generated)
 #   -s AWS_SECRET_ACCESS_KEY AWS secret access key (default: generated)
 #   -r AWS_REGION            AWS region (default: us-east-1)
@@ -20,6 +21,7 @@
 DEFAULT_USERNAME="admin"
 DEFAULT_PASSWORD="seaweedadmin"
 DEFAULT_DOMAIN="example.com"
+DEFAULT_IP="localhost"
 RANDOM_ACCESS_KEY=$(openssl rand -hex 20)
 RANDOM_SECRET_KEY=$(openssl rand -hex 40)
 DEFAULT_AWS_REGION="us-east-1"
@@ -30,6 +32,7 @@ DEFAULT_AWS_S3_ADDRESSING_STYLE="path"
 USERNAME="$DEFAULT_USERNAME"
 PASSWORD="$DEFAULT_PASSWORD"
 DOMAIN="$DEFAULT_DOMAIN"
+IP="$DEFAULT_IP"
 AWS_ACCESS_KEY_ID="$RANDOM_ACCESS_KEY"
 AWS_SECRET_ACCESS_KEY="$RANDOM_SECRET_KEY"
 AWS_REGION="$DEFAULT_AWS_REGION"
@@ -44,6 +47,7 @@ usage() {
     echo "  -u USERNAME              Admin username for cluster management (default: admin)"
     echo "  -p PASSWORD              Admin password for cluster management (default: seaweedadmin)"
     echo "  -d DOMAIN                Domain name for the cluster (default: example.com)"
+    echo "  -i IP_ADDRESS            IP address for server access (default: localhost)"
     echo "  -a AWS_ACCESS_KEY_ID     AWS access key ID (default: generated)"
     echo "  -s AWS_SECRET_ACCESS_KEY AWS secret access key (default: generated)"
     echo "  -r AWS_REGION            AWS region (default: us-east-1)"
@@ -54,15 +58,17 @@ usage() {
     echo "Examples:"
     echo "  $0 -u myadmin -p mypass123"
     echo "  $0 -d mydomain.com -a my-access-key -s my-secret-key"
+    echo "  $0 -i 192.168.1.100"
     exit 1
 }
 
 # Parse command line options
-while getopts "u:p:d:a:s:r:v:t:h" opt; do
+while getopts "u:p:d:i:a:s:r:v:t:h" opt; do
     case $opt in
         u) USERNAME="$OPTARG" ;;
         p) PASSWORD="$OPTARG" ;;
         d) DOMAIN="$OPTARG" ;;
+        i) IP="$OPTARG" ;;
         a) AWS_ACCESS_KEY_ID="$OPTARG" ;;
         s) AWS_SECRET_ACCESS_KEY="$OPTARG" ;;
         r) AWS_REGION="$OPTARG" ;;
@@ -114,7 +120,7 @@ echo "Creating .htpasswd file with username: $USERNAME"
 htpasswd -bc .htpasswd "$USERNAME" "$PASSWORD"
 
 # Create .env file with necessary environment variables
-echo "Creating .env file with domain: $DOMAIN"
+echo "Creating .env file with domain: $DOMAIN and IP: $IP"
 cat > .env << EOL
 # SeaweedFS environment configuration
 # Generated on $(date)
@@ -122,14 +128,17 @@ cat > .env << EOL
 # Domain configuration
 DOMAIN=${DOMAIN}
 
+# IP address for server access
+IP=${IP}
+
 # Docker group ID for API container socket access
 DOCKER_GID=${DOCKER_GID}
 
 # SeaweedFS URL endpoints (through nginx proxy)
-SEAWEED_MASTER_URL=http://localhost/master/1
-SEAWEED_VOLUME_URL=http://localhost/volume/1
-SEAWEED_FILER_URL=http://localhost:8080
-SEAWEED_S3_URL=http://localhost:9333
+SEAWEED_MASTER_URL=http://${IP}/master/1
+SEAWEED_VOLUME_URL=http://${IP}/volume/1
+SEAWEED_FILER_URL=http://${IP}:8888
+SEAWEED_S3_URL=http://${IP}:9333
 
 # Authentication for admin access
 SEAWEED_AUTH_USER=${USERNAME}
@@ -190,18 +199,18 @@ echo "==========================================================================
 echo ""
 echo "📂 Local Access:"
 echo "--------------------------------------"
-echo "- Dashboard:     http://localhost/"
-echo "- Master 1:      http://localhost/master/1/"
-echo "- Volume 1:      http://localhost/volume/1/"
-echo "- Filer 1:       http://localhost/filer/1/"
-echo "- API Docs:      http://localhost/api/docs"
+echo "- Dashboard:     http://${IP}/"
+echo "- Master 1:      http://${IP}/master/1/"
+echo "- Volume 1:      http://${IP}/volume/1/"
+echo "- Filer 1:       http://${IP}/filer/1/"
+echo "- API Docs:      http://${IP}/api/docs"
 echo ""
 echo "🔗 Filer:"
-echo "- Filer:         http://localhost:8888/"
+echo "- Filer:         http://${IP}:8888/"
 echo ""
 echo "🔗 S3 API:"
 echo "--------------------------------------"
-echo "- S3 API:        http://localhost:9333/"
+echo "- S3 API:        http://${IP}:9333/"
 echo ""
 echo "🔐 Admin Authentication:"
 echo "--------------------------------------"
@@ -221,7 +230,8 @@ echo "--------------------------------------"
 echo "All configuration has been saved to .env file"
 echo "S3 config has been saved to s3_config.toml"
 echo "Docker GID set to: $DOCKER_GID"
+echo "IP address set to: $IP"
 echo ""
 echo "======================================================================================"
-echo "✅ Setup complete! Access the dashboard at: http://localhost/"
+echo "✅ Setup complete! Access the dashboard at: http://${IP}/"
 echo "======================================================================================"
